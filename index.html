@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Morse Decoder</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+    #controls {
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 5px 10px;
+      margin-right: 5px;
+    }
+    #received {
+      width: 30%;
+      height: 200px;
+      resize: none;
+      font-family: monospace;
+    }
+    #signal {
+      border: 1px solid black;
+      margin-top: 10px;
+    }
+	#wpm-display {
+  margin-top: 10px;
+  font-size: 16px;
+  font-weight: bold;
+  color: #333;
+}
+
+#wpm-display.low { color: green; } /* 0–20 WPM */
+#wpm-display.medium { color: orange; } /* 21–30 WPM */
+#wpm-display.high { color: red; } /* >30 WPM */
+
+
+  </style>
+</head>
+<body>
+      <h1>Morse Code Decoder DJ0CU-G4ADF</h1>
+<h1>Inspired by Wireless World 1981 N. Kryiazis</h1>
+
+  <div id="controls">
+  <button id="start">Start</button>
+  <button id="stop">Stop</button>
+  <button id="reset">Reset</button>
+  <button id="clear">Clear Text</button>
+</div>
+<div id="wpm-display">Speed: 17 WPM</div> <!-- New WPM display -->
+  <div>
+    <textarea id="received" readonly></textarea>
+  </div>
+  <div>
+    <canvas id="signal" width="200" height="50"></canvas>
+  </div>
+  <progress id="wpm-progress" max="50" value="17"></progress>
+  <script>
+    // Morse code dictionary: '.' for dit (1), '-' for dash (0)
+    const morseTable = {
+      '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E', '..-.': 'F', '--.': 'G', '....': 'H',
+      '..': 'I', '.---': 'J', '-.-': 'K', '.-..': 'L', '--': 'M', '-.': 'N', '---': 'O', '.--.': 'P',
+      '--.-': 'Q', '.-.': 'R', '...': 'S', '-': 'T', '..-': 'U', '...-': 'V', '.--': 'W', '-..-': 'X',
+      '-.--': 'Y', '--..': 'Z', '-----': '0', '.----': '1', '..---': '2', '...--': '3', '....-': '4',
+      '.....': '5', '-....': '6', '--...': '7', '---..': '8', '----.': '9', '.-.-.-': '.', '--..--': ',',
+      '..--..': '?', '-.-.-.': ';', '-..-.': '/', '-...-': '-', '-...-': '=', '.-..-.': '"', '-.-..': '<',
+      '.-...': '>', '---...': ':', '-.--.': '(',
+			  '.-.-': 'Ä',
+            '..--': 'Ü',  
+            '---.': 'Ö',  
+            '...--..': 'SS',
+			'.-.-.': 'AR',
+			'...-.-': 'SK'
+    };
+
+    // Audio and state variables
+    let audioContext;
+    let analyser;
+    let microphone;
+    let threshold = 0.05; // RMS threshold, may need adjustment
+    let currentState = 'space';
+    let lastStateChangeTime = 0;
+    let unitTime = 0.07; // 70ms for 17 wpm
+    let char = []; // Array to build current character
+    let receivedText = '';
+    let noToneTimer = null;
+    let interval = null;
+
+    // Canvas for tuning visuals
+    const signalCanvas = document.getElementById('signal');
+    const signalCtx = signalCanvas.getContext('2d');
+
+// Update WPM display based on unitTime
+function updateWPM() {
+  const wpm = Math.round(1.2 / unitTime);
+  const display = document.getElementById('wpm-display');
+  display.textContent = `Speed: ${wpm} WPM`;
+  display.className = wpm <= 20 ? 'low' : wpm <= 30 ? 'medium' : 'high';
+}
+
+    // Initialize audio context and microphone input
+    async function startAudio() {
+      audioContext = new AudioContext();
+      await audioContext.resume();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512; // ~5.8ms at 44.1kHz sample rate
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        microphone = audioContext.createMediaStreamSource(stream);
+        microphone.connect(analyser);
+      } catch (err) {
+        console.error('Error accessing microphone:', err);
+      }
+    }
+
+    // Calculate RMS of current audio buffer
+    function getRMS() {
+      const bufferLength = analyser.fftSize;
+      const dataArray = new Uint8Array(bufferLength);
+      analyser.getByteTimeDomainData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const sample = (dataArray[i] / 128) - 1; // Normalize to [-1, 1]
+        sum += sample * sample;
+      }
+      return Math.sqrt(sum / bufferLength);
+    }
+
+    // Process audio input and decode Morse
+    function processAudio() {
+      if (!audioContext) return;
+      const rms = getRMS();
+      const isMark = rms > threshold;
+      const currentTime = audioContext.currentTime;
+     
+      if (isMark) {
+        if (currentState === 'space') {
+          const spaceDuration = currentTime - lastStateChangeTime;
+          processSpace(spaceDuration);
+          lastStateChangeTime = currentTime;
+          currentState = 'mark';
+        }
+      } else {
+        if (currentState === 'mark') {
+          const markDuration = currentTime - lastStateChangeTime;
+          processMark(markDuration);
+          lastStateChangeTime = currentTime;
+          currentState = 'space';
+        }
+      }
+
+      // Handle no-tone reset
+      if (currentState === 'space') {
+        if (!noToneTimer) {
+          noToneTimer = setTimeout(resetToDefault, 1500);
+        }
+      } else if (noToneTimer) {
+        clearTimeout(noToneTimer);
+        noToneTimer = null;
+      }
+
+      // Update tuning visual
+      signalCtx.clearRect(0, 0, signalCanvas.width, signalCanvas.height);
+      signalCtx.fillStyle = 'green';
+      const barWidth = Math.min(rms * 1000, signalCanvas.width); // Scale RMS
+      signalCtx.fillRect(0, 0, barWidth, 50);
+    }
+
+    // Process mark duration per document timing
+    function processMark(duration) {
+      const units = duration / unitTime;
+   
+	  if (units < 0.5) return; // Ignore interference
+      if (units <= 2) {
+        char.push('1'); // Dit
+      } else if (units <= 8) {
+        char.push('0'); // Dash (max 8 units)
+      }
+   
+  }
+
+ let unitTimeHistory = [];
+const historyLength = 5;
+function processSpace(duration) {
+  const units = duration / unitTime;
+  if (units < 0.5) return;
+  if (units < 1.5) {
+    unitTimeHistory.push(duration);
+    if (unitTimeHistory.length > historyLength) unitTimeHistory.shift();
+    unitTime = unitTimeHistory.reduce((a, b) => a + b, 0) / unitTimeHistory.length;
+    updateWPM();
+  } else if (units < 4) {
+    // Inter-character space
+    decodeCharacter();
+    char = [];
+  } else if (units >= 4) {
+    // Word space
+    if (char.length > 0) {
+      decodeCharacter();
+      receivedText += ' ';
+      updateDisplay();
+    }
+    char = [];
+  }
+}
+
+   // Decode the current character
+function decodeCharacter() {
+  if (char.length === 0) return;
+  const morseCode = char.map(bit => bit === '1' ? '.' : '-').join('');
+  const character = morseTable[morseCode] || '*';
+  receivedText += character;
+  
+  // Check for 'TTT' or 'EEE' in the last three characters
+  if (receivedText.length >= 3) {
+    const lastThree = receivedText.slice(-3);
+    if (lastThree === 'TTT' || lastThree === 'EEE') {
+      resetToDefault();
+    }
+ 
+  }
+  
+  updateDisplay();
+}
+
+    // Update the text area display
+    function updateDisplay() {
+      document.getElementById('received').value = receivedText;
+    }
+
+    // Reset to default settings (17 wpm)
+   function resetToDefault() {
+  unitTime = 0.07;
+  char = [];
+  updateWPM(); // Update WPM display
+}
+
+    // Event listeners for buttons
+    document.getElementById('start').addEventListener('click', async () => {
+      await startAudio();
+      if (!interval) {
+        interval = setInterval(processAudio, 5); // Check every 5ms
+      }
+    });
+
+    document.getElementById('stop').addEventListener('click', () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+    });
+
+    document.getElementById('reset').addEventListener('click', resetToDefault);
+   document.getElementById('reset').addEventListener('click', resetToDefault);
+    document.getElementById('clear').addEventListener('click', () => {
+      receivedText = '';
+      updateDisplay();
+    });
+  </script>
+</body>
+</html>
