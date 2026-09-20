@@ -40,7 +40,9 @@
   .sliders label{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim2)}
   input[type=range]{width:200px;accent-color:var(--key)}
   .val{color:var(--ink);font-variant-numeric:tabular-nums;min-width:62px}
-  .wfwrap{position:relative;line-height:0}
+  .wfwrap{position:relative;line-height:0;height:110px;resize:vertical;overflow:hidden;
+          border-radius:4px;min-height:48px;max-height:420px}
+  .wfwrap canvas{width:100%;height:100%}
   .wfwrap #cursor{position:absolute;inset:0;background:transparent;pointer-events:none}
   #waterfall{image-rendering:auto}
   button.flash{background:#1d4a3c;border-color:#4fd6a0;color:#c9f4e3}
@@ -80,8 +82,8 @@
 
   <div class="panel">
     <div class="wfwrap">
-      <canvas id="waterfall" width="360" height="190"></canvas>
-      <canvas id="cursor" width="720" height="190"></canvas>
+      <canvas id="waterfall" width="360" height="110"></canvas>
+      <canvas id="cursor" width="720" height="110"></canvas>
     </div>
     <canvas id="scale" width="720" height="26"></canvas>
     <canvas id="scope" width="720" height="44"></canvas>
@@ -194,7 +196,27 @@ const wf = document.getElementById('waterfall'), wfCtx = wf.getContext('2d');
 const cu = document.getElementById('cursor'), cuCtx = cu.getContext('2d');
 const sc = document.getElementById('scale'), scCtx = sc.getContext('2d');
 const sp = document.getElementById('scope'), spCtx = sp.getContext('2d');
-const wfRow = wfCtx.createImageData(wf.width, 1);
+let wfRow = wfCtx.createImageData(wf.width, 1);
+
+/* The panel is resizable by dragging its lower edge, like the text area.
+   The backing store follows the CSS height so the history is drawn at one
+   row per pixel rather than being stretched; the visible history simply
+   grows or shrinks. */
+if (window.ResizeObserver){
+  const wrap = document.querySelector('.wfwrap');
+  new ResizeObserver(entries => {
+    const h = Math.max(48, Math.round(entries[0].contentRect.height));
+    if (h === wf.height) return;
+    const keep = document.createElement('canvas');
+    keep.width = wf.width; keep.height = wf.height;
+    keep.getContext('2d').drawImage(wf, 0, 0);
+    wf.height = h; cu.height = h;
+    wfCtx.fillStyle = '#05070b'; wfCtx.fillRect(0, 0, wf.width, h);
+    wfCtx.drawImage(keep, 0, 0);                  // carry the old history over
+    wfRow = wfCtx.createImageData(wf.width, 1);
+    drawCursor();
+  }).observe(wrap);
+}
 let scopeTrace = new Array(sp.width).fill(0);
 let scopeState = new Array(sp.width).fill(0);
 
