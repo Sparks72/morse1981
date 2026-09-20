@@ -56,7 +56,7 @@
               display:inline-block;text-align:right}
   /* fixed slots, so a number changing width cannot shunt the rest of the line */
   #wpm{min-width:2.6ch} #unitMs{min-width:3.4ch} #snr{min-width:3.8ch}
-  #fit{min-width:12ch;text-align:left} #status{min-width:14ch}
+  #fit{min-width:15ch;text-align:left} #status{min-width:14ch}
   .low b{color:var(--key)} .medium b{color:var(--warn)} .high b{color:var(--hot)}
   .hint{color:var(--dim2);font-size:12.5px;margin:6px 0 0}
 </style>
@@ -648,7 +648,7 @@ function updateReadouts(){
   setText(wpmEl, String(wpm));
   setText(unitEl, String(Math.round(unit*1000)));
   if (fitEl){
-    setText(fitEl, lastFitWpm ? lastFitWpm + ' WPM, fit ' + lastFitErr.toFixed(2) : '—');
+    setText(fitEl, lastFitWpm ? lastFitWpm + ' WPM, jitter ' + Math.round(lastFitErr*100) + '%' : '—');
     const col = lastFitWpm ? (lastFitErr < 0.25 ? '#4fd6a0' : lastFitErr < 0.45 ? '#e8b64c' : '#e2665a') : '';
     if (fitEl.style.color !== col) fitEl.style.color = col;
   }

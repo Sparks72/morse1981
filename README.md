@@ -39,8 +39,19 @@ works the same way.
 | **Buffered output** | Holds text ten characters behind, so a lost-sync verdict can withdraw the characters that caused it. Caught up after two seconds of silence, or the moment the box is unticked. Off prints each character as it is decoded. |
 
 The readouts show the current speed and unit length, the tone-to-neighbour
-ratio in dB, and the fitted speed with its fit error. A fit error below about
-0.25 means the element timings are clean.
+ratio in dB, and the fitted speed with its **jitter**.
+
+Jitter is how far the measured marks and gaps stray from the ideal 1 : 3 : 7
+pattern, averaged over the recent elements and given as a percentage of each
+element's own length. It measures the *consistency* of the timings, not
+whether the decoded letters are correct — there is no way to know what was
+actually sent. Under 25% is clean (shown green), 25–45% is workable (amber),
+above 45% the decoder stops trusting the fit and holds output (red).
+
+It is the most useful figure for diagnosis. Ragged text with low jitter means
+the speed tracking is fine and the trouble is in the detector — tuning or
+sensitivity. Rising jitter means the element timings themselves are being
+mangled, which points at the signal.
 
 ## How it works
 
@@ -88,8 +99,8 @@ releases the detector late, stretching every mark and clipping every gap by
 about the same amount. That offset is fitted as a second parameter and removed
 from the decision thresholds.
 
-Lock is a live judgement, not a one-off. It is dropped when the fit error
-rises above 0.45, when the fit lands on either end of the speed range, after
+Lock is a live judgement, not a one-off. It is dropped when the jitter
+rises above 45%, when the fit lands on either end of the speed range, after
 five consecutive single-symbol characters (E T I M S O H 5 0 or `*`), or when
 two lone `TT` words appear inside the last 24 characters. That last test came
 from on-air use: `TT` inside a word is ordinary — LETTER, BETTER, ATTACK all
