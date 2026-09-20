@@ -42,6 +42,7 @@
   .val{color:var(--ink);font-variant-numeric:tabular-nums;min-width:62px}
   .wfwrap{position:relative;line-height:0}
   .wfwrap #cursor{position:absolute;inset:0;background:transparent;pointer-events:none}
+  #waterfall{image-rendering:auto}
   button.flash{background:#1d4a3c;border-color:#4fd6a0;color:#c9f4e3}
   canvas{display:block;width:100%;border-radius:4px;background:#05070b}
   #scale{height:26px;background:transparent}
@@ -79,7 +80,7 @@
 
   <div class="panel">
     <div class="wfwrap">
-      <canvas id="waterfall" width="720" height="190"></canvas>
+      <canvas id="waterfall" width="360" height="190"></canvas>
       <canvas id="cursor" width="720" height="190"></canvas>
     </div>
     <canvas id="scale" width="720" height="26"></canvas>
@@ -193,6 +194,7 @@ const wf = document.getElementById('waterfall'), wfCtx = wf.getContext('2d');
 const cu = document.getElementById('cursor'), cuCtx = cu.getContext('2d');
 const sc = document.getElementById('scale'), scCtx = sc.getContext('2d');
 const sp = document.getElementById('scope'), spCtx = sp.getContext('2d');
+const wfRow = wfCtx.createImageData(wf.width, 1);
 let scopeTrace = new Array(sp.width).fill(0);
 let scopeState = new Array(sp.width).fill(0);
 
@@ -208,7 +210,9 @@ async function startAudio(){
 
   specAn = audioCtx.createAnalyser();
   specAn.fftSize = 4096;                 // ~11 Hz bins for tuning
-  specAn.smoothingTimeConstant = 0.35;
+  specAn.smoothingTimeConstant = 0.5;
+  specAn.minDecibels = -95;              // the byte data is already in dB:
+  specAn.maxDecibels = -25;              // setting the range sets the contrast
   specData = new Uint8Array(specAn.frequencyBinCount);
 
   envAn = audioCtx.createAnalyser();
@@ -687,14 +691,19 @@ function tick(){
 /* ------------------------------------------------------------------
    Waterfall, frequency scale and envelope scope
 ------------------------------------------------------------------ */
-function heat(v){
-  // 0..1 -> dark blue / teal / green / amber / white
+/* The palette is built once into a 256-entry lookup table.  The old version
+   formatted an "rgb(...)" string and issued a fillRect for every pixel of
+   every row — 720 string allocations and 720 draw calls, 60 times a second.
+   Now each row is written straight into an ImageData and blitted in one go. */
+const PALETTE = (() => {
   const stops = [[5,7,11],[12,40,70],[16,100,110],[70,170,90],[220,180,60],[255,250,235]];
-  const x = Math.max(0, Math.min(0.999, v)) * (stops.length-1);
-  const i = Math.floor(x), f = x - i;
-  const a = stops[i], b = stops[i+1];
-  return `rgb(${a[0]+(b[0]-a[0])*f|0},${a[1]+(b[1]-a[1])*f|0},${a[2]+(b[2]-a[2])*f|0})`;
-}
+  const lut = new Uint8ClampedArray(256*3);
+  for (let i=0;i<256;i++){
+    const x = (i/255)*(stops.length-1), k = Math.min(stops.length-2, Math.floor(x)), f = x-k;
+    for (let c=0;c<3;c++) lut[i*3+c] = stops[k][c] + (stops[k+1][c]-stops[k][c])*f;
+  }
+  return lut;
+})();
 
 function drawCursor(){
   cuCtx.clearRect(0,0,cu.width,cu.height);
@@ -726,21 +735,31 @@ function drawScale(){
   scCtx.closePath(); scCtx.fill();
 }
 
+let frameNo = 0;
 function drawFrame(){
   rafId = requestAnimationFrame(drawFrame);
   if (!specAn) return;
+  const drawWF = (frameNo++ & 1) === 0;            // waterfall at ~30 fps
 
   specAn.getByteFrequencyData(specData);
   const binHz = audioCtx.sampleRate / specAn.fftSize;
 
   trackTone();
 
-  wfCtx.drawImage(wf, 0, 1);                       // scroll down one line
-  for (let x=0; x<wf.width; x++){
-    const f = F_MIN + (F_MAX-F_MIN)*x/wf.width;
-    const v = specData[Math.round(f/binHz)] / 255;
-    wfCtx.fillStyle = heat(v*v*1.35);
-    wfCtx.fillRect(x, 0, 1, 1);
+  if (drawWF){
+    wfCtx.drawImage(wf, 0, 1);                     // scroll down one line
+    const px = wfRow.data;
+    for (let x=0; x<wf.width; x++){
+      // interpolate between bins rather than taking the nearest: the span holds
+      // only about 77 bins, and nearest-neighbour is what made it look blocky
+      const b = (F_MIN + (F_MAX-F_MIN)*x/wf.width)/binHz;
+      const i = b|0, f = b-i;
+      const v = specData[i]*(1-f) + (specData[i+1]||0)*f;
+      const c = (Math.min(255, v*1.15)|0)*3;
+      const o = x*4;
+      px[o] = PALETTE[c]; px[o+1] = PALETTE[c+1]; px[o+2] = PALETTE[c+2]; px[o+3] = 255;
+    }
+    wfCtx.putImageData(wfRow, 0, 0);
   }
 
   // envelope scope
