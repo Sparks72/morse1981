@@ -13,15 +13,7 @@ issue is scanned at
 ## Running it
 
 Open `index.html` and press **Start**, then allow microphone access when
-prompted. Firefox will prompt for a file opened directly from disk; Chrome and
-Edge treat `file://` as an insecure origin and refuse the microphone without
-any visible error, so under those serve the file instead:
-
-    python -m http.server 8000
-
-then open `http://localhost:8000/`. Any static server, or any `https://` host,
-works the same way.
-
+prompted.
 ## Controls
 
 | Control | What it does |
