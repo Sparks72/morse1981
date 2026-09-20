@@ -52,7 +52,11 @@
     padding:10px;font:16px/1.6 Consolas,"DejaVu Sans Mono",monospace;
   }
   .readouts{display:flex;flex-wrap:wrap;gap:22px;align-items:baseline;font-size:14px;color:var(--dim2)}
-  .readouts b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+  .readouts b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;
+              display:inline-block;text-align:right}
+  /* fixed slots, so a number changing width cannot shunt the rest of the line */
+  #wpm{min-width:2.6ch} #unitMs{min-width:3.4ch} #snr{min-width:3.8ch}
+  #fit{min-width:12ch;text-align:left} #status{min-width:14ch}
   .low b{color:var(--key)} .medium b{color:var(--warn)} .high b{color:var(--hot)}
   .hint{color:var(--dim2);font-size:12.5px;margin:6px 0 0}
 </style>
