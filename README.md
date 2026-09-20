@@ -6,14 +6,21 @@ install, no libraries.
 
 The timing rules follow N. Kyriazis, "Morse decoding — a machine-code program
 for decoding Morse transmissions on a home computer", *Wireless World*,
-February 1981, with the speed tracking rebuilt (see below).
+February 1981, pp. 44–46, with the speed tracking rebuilt (see below). The
+issue is scanned at
+[worldradiohistory.com](https://worldradiohistory.com/UK/Wireless-World/80s/Wireless-World-1981-02.pdf).
 
 ## Running it
 
 Open `index.html` and press **Start**, then allow microphone access when
-prompted.
+prompted. Firefox will prompt for a file opened directly from disk; Chrome and
+Edge treat `file://` as an insecure origin and refuse the microphone without
+any visible error, so under those serve the file instead:
 
-   
+    python -m http.server 8000
+
+then open `http://localhost:8000/`. Any static server, or any `https://` host,
+works the same way.
 
 ## Controls
 
