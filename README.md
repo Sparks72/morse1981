@@ -30,11 +30,13 @@ works the same way.
 | **Auto tune** | Jumps to the strongest tone in 300–1200 Hz. Press it while the signal is keying, not during a gap. |
 | **Reset speed** | Returns to the Start speed and clears the timing history. |
 | **Tone** | Detector centre frequency. Clicking the waterfall does the same. |
-| **Sensitivity** | Where the decision level sits between key-up and key-down. Higher is more sensitive; lower rejects more noise. Default 60%. |
+| **Sensitivity** | Where the decision level sits between key-up and key-down, and how far the tone must stand above the noise to count as keyed at all. Higher is more sensitive; lower rejects more noise. Default 60%. |
 | **Start speed** | Where the decoder begins before it has locked. Default 21 WPM. |
 | **Follow the tone** | Tracks drift, up to ±70 Hz from the slider setting. |
 | **Fast speed lock** | Uses the template fit below. Off reverts to the 1981 adaptation rule. |
-| **Hold output until locked** | Suppresses characters decoded before the speed is known. |
+| **Hold output until locked** | Suppresses characters while the speed is unknown — before the first lock, and again if lock is lost. |
+| **Auto sensitivity** | Adjusts the sensitivity by itself: a slow sweep while unlocked, then hill climbing on the fit error once locked. Moving the slider by hand hands control back. |
+| **Buffered output** | Holds text ten characters behind, so a lost-sync verdict can withdraw the characters that caused it. Caught up after two seconds of silence, or the moment the box is unticked. Off prints each character as it is decoded. |
 
 The readouts show the current speed and unit length, the tone-to-neighbour
 ratio in dB, and the fitted speed with its fit error. A fit error below about
@@ -86,8 +88,17 @@ releases the detector late, stretching every mark and clipping every gap by
 about the same amount. That offset is fitted as a second parameter and removed
 from the decision thresholds.
 
-If eight consecutive single-symbol characters appear (E T I M S O H 5 0 or
-`*`), the lock is assumed lost and the fit is redone at full weight.
+Lock is a live judgement, not a one-off. It is dropped when the fit error
+rises above 0.45, when the fit lands on either end of the speed range, after
+five consecutive single-symbol characters (E T I M S O H 5 0 or `*`), or when
+two lone `TT` words appear inside the last 24 characters. That last test came
+from on-air use: `TT` inside a word is ordinary — LETTER, BETTER, ATTACK all
+decode that way — but `TT` standing alone as a word, twice, means long
+elements are being chopped into pairs of T.
+
+Because output is held back, those verdicts trim the text as well as stopping
+it: the held characters are cut back to the first offending one, so the
+garbage never reaches the screen.
 
 ## Tested behaviour
 
@@ -103,7 +114,8 @@ floor), starting from 21 WPM:
     sent 40 wpm -> "Q DE DJ0CU TEST"
 
 One character is lost while the fit commits. With 8% timing jitter and a click
-splitting one mark in twelve, 22 to 35 WPM still decode cleanly.
+splitting one mark in twelve, 22 to 35 WPM still decode cleanly. Tested on air
+against hand-sent and machine-sent Morse from 10 to 45 WPM.
 
 ## Known limits
 
@@ -122,9 +134,10 @@ splitting one mark in twelve, 22 to 35 WPM still decode cleanly.
   or six offsets would ignore the occupied one. The detection bandwidth is
   about 94 Hz at `ENV_N` = 512, wider than CW needs — choosing the window
   length from the locked speed would sharpen adjacent-signal rejection.
-- Timing resolution is limited by the 4 ms poll and the 11 ms analysis window,
-  so roughly 40 WPM is the ceiling. Sample-accurate edge timing would need an
-  AudioWorklet.
+- The analysis window and the vote length are fractions of a dit rather than
+  fixed times, so they narrow at speed. Tested to 45 WPM, the top of the fit
+  range; above that the 4 ms poll starts to dominate and sample-accurate edge
+  timing would need an AudioWorklet.
 
 ## Tuning constants
 
@@ -132,8 +145,9 @@ Near the top of the script:
 
 | Constant | Default | Meaning |
 | --- | --- | --- |
-| `ENV_N` | 512 | Goertzel window, samples. Shorter is faster but wider. |
+| `ENV_N` | 512 | Envelope buffer, samples. The window actually used is `WIN_FRAC` of a dit, up to this. |
+| `WIN_FRAC` | 0.20 | Analysis window as a fraction of a dit. |
 | `POLL_MS` | 4 | Detector sampling interval. |
-| `VOTES` | 5 | Samples majority-voted per state change. |
+| `VOTE_FRAC` / `VOTES_MAX` | 0.30 / 5 | Vote length as a fraction of a dit, and its cap. |
 | `FIT_LEN` | 36 | Elements held for the speed fit. |
 | `MIN_UNIT` / `MAX_UNIT` | 45 / 8 WPM | Limits of the speed fit. |

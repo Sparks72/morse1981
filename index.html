@@ -94,6 +94,8 @@
     <label><input type="checkbox" id="toneTrack" checked> Follow the tone</label>
     <label><input type="checkbox" id="fastLock" checked> Fast speed lock</label>
     <label><input type="checkbox" id="holdOutput" checked> Hold output until locked</label>
+    <label><input type="checkbox" id="autoSens" checked> Auto sensitivity</label>
+    <label><input type="checkbox" id="buffered" checked> Buffered output</label>
   </div>
 
   <textarea id="received" readonly placeholder="Decoded text appears here."></textarea>
@@ -133,11 +135,24 @@ let PRESET_UNIT = 1.2/21;         // starting UNIT, set by the Start speed slide
 const MIN_UNIT = 1.2/45;          // 45 WPM ceiling
 const MAX_UNIT = 1.2/8;           // 8 WPM floor
 const POLL_MS  = 4;               // detector sampling interval
-const VOTES    = 5;               // five samples, majority wins (as in the article)
-const ENV_N    = 512;             // envelope window, samples (~11 ms)
+const VOTES_MAX = 5;              // majority vote length, scaled to the speed below
+const ENV_N    = 512;             // envelope buffer, samples (~11 ms at 48 kHz)
+
+/* Both the analysis window and the vote are fixed fractions of a dit rather
+   than fixed times.  A 512-sample window and five votes is 20 ms of lag —
+   fine at 20 WPM where a dit is 57 ms, but two thirds of a dit at 37 WPM,
+   which is what puts a ceiling on the speed.  Narrower at speed, wider and
+   quieter when there is time for it. */
+let WIN_FRAC = 0.20, VOTE_FRAC = 0.30;
+function windowLen(sr){
+  return Math.max(128, Math.min(ENV_N, Math.round(WIN_FRAC*unit*sr)));
+}
+function voteLen(){
+  return Math.max(3, Math.min(VOTES_MAX, Math.round(VOTE_FRAC*unit*1000/POLL_MS)));
+}
 
 let unit = PRESET_UNIT;
-let toneTrack = true, fastLock = true, holdOutput = true;
+let toneTrack = true, fastLock = true, holdOutput = true, autoSens = true;
 let locked = false;            // the fit has committed to a speed
 let toneState = 'space';          // debounced state
 let lastEdge = 0;                 // time of the last debounced edge
@@ -162,14 +177,18 @@ let targetFreq = 700, userFreq = 700;
 let sensitivity = 0.60;
 let level = 0, refLevel = 0, ratio = 0, threshOn = 0, threshOff = 0;
 let envMax = 0, envMin = 0, levelS = 0, envSeeded = false;
+let snrAvg = 0, lastPaint = 0;
 let peakLevel = 1e-3;                 // scope scaling only
 
 function seedAGC(){
-  refLevel = 0; peakLevel = 1e-3; votes = []; envSeeded = false;
+  refLevel = 0; peakLevel = 1e-3; votes = []; envSeeded = false; snrAvg = 0;
 }
 
 const F_MIN = 300, F_MAX = 1200;   // waterfall span
 
+const wpmEl = document.getElementById('wpm'), unitEl = document.getElementById('unitMs');
+const snrEl = document.getElementById('snr'), fitEl = document.getElementById('fit');
+const readoutsEl = document.getElementById('readouts');
 const wf = document.getElementById('waterfall'), wfCtx = wf.getContext('2d');
 const cu = document.getElementById('cursor'), cuCtx = cu.getContext('2d');
 const sc = document.getElementById('scale'), scCtx = sc.getContext('2d');
@@ -216,11 +235,11 @@ function stopAudio(){
 }
 
 /* Goertzel magnitude at one frequency, Hann windowed */
-function goertzel(freq, sr){
-  const N = ENV_N;
+function goertzel(freq, sr, N){
+  const start = ENV_N - N;                 // the most recent N samples
   const coeff = 2*Math.cos(2*Math.PI*freq/sr);
   let s1 = 0, s2 = 0;
-  for (let i=0;i<N;i++){ const s0 = envBuf[i] + coeff*s1 - s2; s2 = s1; s1 = s0; }
+  for (let i=start;i<ENV_N;i++){ const s0 = envBuf[i] + coeff*s1 - s2; s2 = s1; s1 = s0; }
   const power = s1*s1 + s2*s2 - coeff*s1*s2;
   return Math.sqrt(Math.max(power,0)) / (N/4);
 }
@@ -230,15 +249,15 @@ function goertzel(freq, sr){
    immune to the microphone gain, to fades, and to broadband noise. */
 function measure(){
   envAn.getByteTimeDomainData(envData);
-  const N = ENV_N, sr = audioCtx.sampleRate;
-  for (let i=0;i<N;i++){
-    const w = 0.5 - 0.5*Math.cos(2*Math.PI*i/(N-1));
+  const sr = audioCtx.sampleRate, n = windowLen(sr), start = ENV_N - n;
+  for (let i=start;i<ENV_N;i++){
+    const w = 0.5 - 0.5*Math.cos(2*Math.PI*(i-start)/(n-1));
     envBuf[i] = ((envData[i]/128)-1) * w;
   }
   const lo = Math.max(200, targetFreq-280), hi = Math.min(1900, targetFreq+280);
   return {
-    mag: goertzel(targetFreq, sr),
-    ref: (goertzel(lo, sr) + goertzel(hi, sr))/2 + 1e-7
+    mag: goertzel(targetFreq, sr, n),
+    ref: (goertzel(lo, sr, n) + goertzel(hi, sr, n))/2 + 1e-7
   };
 }
 
@@ -267,22 +286,38 @@ function detect(){
   const span = envMax - envMin;
   const frac = 0.80 - (sensitivity-0.15)*0.67;   // 0.8 down to 0.4 across the slider
   const mid  = envMin + span*frac;
-  threshOn  = mid + span*0.06;
-  threshOff = mid - span*0.06;
+
+  // Floor guard: however the midpoint falls out, the decision level is never
+  // allowed closer than this to the key-up level, so the slider still bites
+  // when the signal is weak or absent and the two levels have converged.
+  const guard = envMin * (1 + (0.90-sensitivity)*1.8);   // 2.3x noise .. 1.3x
+
+  threshOn  = Math.max(mid + span*0.06, guard);
+  threshOff = Math.max(mid - span*0.06, guard*0.88);
 
   let raw;
-  const keyed = envMax > 3*Math.max(envMin,1e-9) && envMax > 2*refLevel;
+  // How far the tone must stand above the key-up level, and above its own
+  // neighbours, before it counts as keyed at all.  The slider sets both:
+  // 3.5x and 2.4x at the cautious end, 1.6x and 1.3x at the sensitive end.
+  const needEnv = 3.5 - (sensitivity-0.15)*3.2;
+  const needRef = 2.4 - (sensitivity-0.15)*1.8;
+  const keyed = envMax > needEnv*Math.max(envMin,1e-9) && envMax > needRef*refLevel;
   if (!keyed) raw = 0;                                   // no keyed tone present
   else if (toneState === 'mark') raw = levelS > threshOff ? 1 : 0;
   else raw = levelS > threshOn ? 1 : 0;
 
+  // Signal reading: average the ratio over key-down periods only.  Including
+  // the gaps is what made it swing on every dit and dah.
+  if (toneState === 'mark' && keyed) snrAvg = snrAvg ? snrAvg*0.985 + ratio*0.015 : ratio;
+
   votes.push(raw);
   if (level > peakLevel) peakLevel = level;              // scope scaling only
   else peakLevel = peakLevel*0.999 + level*0.001;
-  if (votes.length > VOTES) votes.shift();
+  const need = voteLen();
+  while (votes.length > need) votes.shift();
+  if (votes.length < need) return toneState;
   const sum = votes.reduce((a,b)=>a+b,0);
-  if (votes.length < VOTES) return toneState;
-  return sum >= Math.ceil(VOTES/2) ? 'mark' : 'space';
+  return sum >= Math.ceil(need/2) ? 'mark' : 'space';
 }
 
 /* ------------------------------------------------------------------
@@ -294,7 +329,7 @@ function onEdge(newState, t){
 
   if (newState === 'space'){
     // a mark segment has just ended
-    if (d < 0.5*(unit+bias) && !markOpen) return;   // isolated blip: interference, gap runs on
+    if (d < Math.min(0.5*(unit+bias), 0.8*MIN_UNIT) && !markOpen) return;  // isolated blip
     accumMark += d;
     markOpen = true;
     markEndTime = t;
@@ -318,7 +353,12 @@ function onEdge(newState, t){
    a decaying tone clips gaps by `bias`, so allow for that, with the debounce
    window as the floor. */
 function minGap(){
-  return Math.max(0.5*unit - bias, Math.max(0.25*unit, VOTES*POLL_MS/1000));
+  // Never longer than half a dit at the fastest speed the decoder supports.
+  // If UNIT is currently too slow — a fast sender before lock — a threshold of
+  // half the CURRENT unit swallows real gaps, the marks all run together, and
+  // no element ever reaches the fit.  That deadlock is what put a ceiling on
+  // the sending speed.
+  return Math.max(voteLen()*POLL_MS/1000, Math.min(0.5*unit - bias, 0.5*MIN_UNIT));
 }
 
 function closeMark(){
@@ -362,13 +402,20 @@ function pushSample(buf, v){
    measures short by about the same amount.  Fit that offset as well as the
    speed, then take it out of the decision thresholds. */
 function fitError(u, d){
+  // Each sample's error is measured against its OWN length, not against the
+  // candidate unit.  Dividing by the candidate shrinks every error as the
+  // candidate grows, which quietly rewards slow speeds: on noisy data the fit
+  // then slides to the bottom of the range and sticks there, because at 8 WPM
+  // every fragment can be called a dit.  Per-sample normalising has no such
+  // bias.  Terms are capped so one wild element cannot dominate.
   let err = 0, n = 0;
   for (const m of recentMarks){                       // marks are 1 or 3 units, plus d
-    err += Math.min(Math.abs(m-(u+d)), Math.abs(m-(3*u+d)))/u;
+    err += Math.min(1, Math.min(Math.abs(m-(u+d)), Math.abs(m-(3*u+d)))/Math.max(m,1e-4));
     n++;
   }
   for (const g of recentGaps){                        // gaps are 1, 3 or 7 units, less d
-    err += Math.min(Math.abs(g-(u-d)), Math.abs(g-(3*u-d)), Math.abs(g-(7*u-d)))/u;
+    err += Math.min(1, Math.min(Math.abs(g-(u-d)), Math.abs(g-(3*u-d)),
+                               Math.abs(g-(7*u-d)))/Math.max(g,1e-4));
     n++;
   }
   return n ? err/n : 1;
@@ -389,11 +436,58 @@ function bestUnit(){
   return { u: bestU, d: bestD };
 }
 
+/* Automatic sensitivity.  The fit error is a direct measure of how clean the
+   element timings are, so nudge the slider and keep whichever direction makes
+   the error smaller.  A plain hill climb: if a move made things worse, turn
+   round.  It leaves the setting alone once the timings are already clean. */
+let errWindow = [], sensDir = 0.03, lastAvgErr = null, lastHunt = 0;
+
+/* While nothing is locked, hill climbing has nothing to climb: a setting too
+   low produces no elements at all, so no fit, so no feedback.  Sweep instead,
+   a step every few seconds, wrapping round.  Once locked this stops and the
+   hill climb takes over. */
+function huntSens(t){
+  if (!autoSens || locked) return;
+  if (t - lastHunt < 2) return;
+  lastHunt = t;
+  setSens(sensitivity + 0.08 > 0.755 ? 0.15 : sensitivity + 0.08);
+}
+
+function considerSens(){
+  if (!autoSens || !locked) return;
+  lastHunt = audioCtx ? audioCtx.currentTime : 0;      // locked: stop sweeping
+  errWindow.push(lastFitErr);
+  if (errWindow.length < 8) return;
+  const avg = errWindow.reduce((a,b) => a+b, 0)/errWindow.length;
+  errWindow = [];
+  if (avg < 0.12){ lastAvgErr = avg; return; }        // good enough, don't fiddle
+  if (lastAvgErr !== null && avg > lastAvgErr + 0.005) sensDir = -sensDir;
+  lastAvgErr = avg;
+  setSens(sensitivity + sensDir);
+}
+
+function setSens(v){
+  sensitivity = Math.min(0.75, Math.max(0.15, v));
+  const pct = Math.round(sensitivity*100);
+  const sl = document.getElementById('sens');
+  if (sl) sl.value = pct;
+  setText(document.getElementById('sensVal'), pct + '%');
+}
+
+function unlock(){
+  if (!locked) return;
+  locked = false;                                     // output held until re-locked
+  if (audioCtx) statusEl.textContent = 'Finding the speed';
+}
+
 function relock(weight){
   sinceFit = 0;
   if (recentMarks.length < 6) return 'wait';          // not enough evidence yet
   const fit = bestUnit();
-  if (lastFitErr > 0.45) return 'poor';               // fit too poor to trust
+  // Lock is a live judgement, not a one-off: if the element timings stop
+  // fitting, drop back to holding output rather than printing fragments.
+  if (lastFitErr > 0.45){ unlock(); return 'poor'; }
+  if ((lastFitWpm <= 8.5 || lastFitWpm >= 44.5) && lastFitErr > 0.20){ unlock(); return 'poor'; }
   const w = Math.abs(fit.u-unit) > 0.3*unit ? Math.min(1, weight*2) : weight;
   unit = Math.min(MAX_UNIT, Math.max(MIN_UNIT, unit*(1-w) + fit.u*w));
   bias = bias*(1-w) + fit.d*w;
@@ -402,6 +496,7 @@ function relock(weight){
     if (audioCtx) statusEl.textContent = 'Locked';
   }
   updateReadouts();
+  considerSens();
   return 'ok';
 }
 
@@ -409,6 +504,58 @@ function adaptUnit(gap){
   const u = (unit + gap)/2;                           // the article's rule
   unit = Math.min(MAX_UNIT, Math.max(MIN_UNIT, u));
   updateReadouts();
+}
+
+/* Output is held back by a few characters so that a lost-sync verdict can
+   discard the characters that led to it, rather than only stopping the ones
+   that follow.  The delay is flushed after a pause in sending, so the tail of
+   a transmission is never left sitting in the buffer. */
+const HOLD_CHARS = 10;      // characters held back
+const HOLD_SECS  = 1.5;     // ...but never for longer than this
+let buffered = true;
+let pending = [];           // [{c, t}]
+
+/* The hold is bounded by time as well as by count.  With a count alone, a
+   run of lost-sync verdicts can trim the held characters faster than they age
+   out, and nothing ever reaches the screen — output appears to stop dead.
+   Committing anything older than HOLD_SECS guarantees the text keeps moving
+   however often the decoder changes its mind. */
+function commitOldest(){ text += pending.shift().c; }
+
+function emit(ch){
+  pending.push({ c: ch, t: audioCtx ? audioCtx.currentTime : 0 });
+  const hold = buffered ? HOLD_CHARS : 0;
+  while (pending.length > hold) commitOldest();
+  updateText();
+}
+
+function agePending(now){
+  let moved = false;
+  while (pending.length && now - pending[0].t > HOLD_SECS){ commitOldest(); moved = true; }
+  if (moved) updateText();
+}
+
+/* Cut the held text back to where the trouble started, rather than throwing
+   away the whole delay line: everything before the first offending character
+   was decoded while the lock was still good. */
+function dropPendingFrom(marker){
+  const held = pending.map(p => p.c).join('');
+  let cut;
+  if (marker === 'tt'){
+    const m = held.match(/(^|\s)TT(\s|$)/);          // the first lone TT held
+    cut = m ? m.index + (m[1] ? 1 : 0) : 0;
+  } else {
+    cut = Math.max(0, pending.length - marker);      // the degenerate run
+  }
+  pending = pending.slice(0, cut);
+  updateText();
+}
+
+function flushPending(){
+  if (!pending.length) return;
+  text += pending.map(p => p.c).join('');
+  pending = [];
+  updateText();
 }
 
 function decodeChar(){
@@ -419,8 +566,7 @@ function decodeChar(){
   // Before the speed fit has committed, the characters are guesswork against
   // the wrong UNIT.  Measure them, but do not print them.
   if (holdOutput && !locked){ checkLostLock(ch); return; }
-  text += ch;
-  updateText();
+  emit(ch);
   checkLostLock(ch);
 }
 
@@ -428,9 +574,37 @@ function decodeChar(){
    means UNIT no longer matches the sender.  Re-fit at full weight. */
 const DEGENERATE = 'ETIMSOH50*';
 let degRun = 0;
+let recentChars = [];
+
+/* A sharper test than the run length, suggested from on-air use: "TT" standing
+   alone as a word is not a word in any traffic worth decoding, whereas TT
+   inside a word is ordinary (LETTER, BETTER, ATTACK).  Two lone TTs in the
+   recent window means the dah threshold has drifted and long elements are
+   being chopped into pairs of T.  Word spaces are recorded even while output
+   is held, so the boundaries are known either way. */
+function loneTT(){
+  const words = recentChars.join('').split(' ');
+  words.pop();                       // the last word is not finished yet
+  return words.filter(w => w === 'TT').length;
+}
+
 function checkLostLock(ch){
+  recentChars.push(ch);
+  if (recentChars.length > 24) recentChars.shift();
+  if (loneTT() >= 2){
+    recentChars = [];
+    dropPendingFrom('tt');                            // discard from the first lone TT
+    unlock();
+    if (relock(1) === 'poor'){
+      recentMarks = []; recentGaps = [];
+      unit = PRESET_UNIT; bias = 0;
+      updateReadouts();
+    }
+    return;
+  }
   if (ch.length === 1 && DEGENERATE.includes(ch)) degRun++;
   else degRun = 0;
+  if (degRun >= 5){ dropPendingFrom(degRun); unlock(); }   // drop the degenerate run
   if (degRun >= 8){
     degRun = 0;
     // Only start again if the fit was genuinely judged and found wanting.
@@ -446,8 +620,11 @@ function checkLostLock(ch){
 }
 
 function addWordSpace(){
+  // Recorded even when output is held, so word boundaries stay known.
+  if (recentChars[recentChars.length-1] !== ' ') recentChars.push(' ');
   if (holdOutput && !locked) return;
-  if (text && !text.endsWith(' ')){ text += ' '; updateText(); }
+  const last = pending.length ? pending[pending.length-1].c : text.slice(-1);
+  if ((text || pending.length) && last !== ' ') emit(' ');
 }
 
 function updateText(){
@@ -458,23 +635,25 @@ function updateText(){
 
 function resetSpeed(){
   unit = PRESET_UNIT; charBits = []; accumMark = 0; markOpen = false; tooLong = false;
-  recentMarks = []; recentGaps = []; degRun = 0; lastFitWpm = 0;
+  recentMarks = []; recentGaps = []; degRun = 0; lastFitWpm = 0; recentChars = [];
   bias = 0; locked = false;
   if (audioCtx) statusEl.textContent = 'Finding the speed';
   updateReadouts();
 }
 
+function setText(el, v){ if (el && el.textContent !== v) el.textContent = v; }
+
 function updateReadouts(){
   const wpm = Math.round(1.2/unit);
-  document.getElementById('wpm').textContent = wpm;
-  document.getElementById('unitMs').textContent = Math.round(unit*1000);
-  const fit = document.getElementById('fit');
-  if (fit){
-    fit.textContent = lastFitWpm ? lastFitWpm + ' WPM, fit ' + lastFitErr.toFixed(2) : '—';
-    fit.style.color = lastFitWpm ? (lastFitErr < 0.25 ? '#4fd6a0' : lastFitErr < 0.45 ? '#e8b64c' : '#e2665a') : '';
+  setText(wpmEl, String(wpm));
+  setText(unitEl, String(Math.round(unit*1000)));
+  if (fitEl){
+    setText(fitEl, lastFitWpm ? lastFitWpm + ' WPM, fit ' + lastFitErr.toFixed(2) : '—');
+    const col = lastFitWpm ? (lastFitErr < 0.25 ? '#4fd6a0' : lastFitErr < 0.45 ? '#e8b64c' : '#e2665a') : '';
+    if (fitEl.style.color !== col) fitEl.style.color = col;
   }
-  const box = document.getElementById('readouts');
-  box.className = 'panel readouts ' + (wpm <= 20 ? 'low' : wpm <= 30 ? 'medium' : 'high');
+  const cls = 'panel readouts ' + (wpm <= 20 ? 'low' : wpm <= 30 ? 'medium' : 'high');
+  if (readoutsEl && readoutsEl.className !== cls) readoutsEl.className = cls;
 }
 
 /* ------------------------------------------------------------------
@@ -487,6 +666,9 @@ function tick(){
 
   if (s !== toneState){ toneState = s; onEdge(s, t); }
 
+  huntSens(t);
+  if (pending.length) agePending(t);
+
   if (toneState === 'space'){
     const gap = t - markEndTime;
     const charGap = Math.max(1.5*unit - bias, 0.6*unit);
@@ -494,6 +676,7 @@ function tick(){
     if (markOpen && gap >= minGap()) closeMark();                  // valid space: element ends
     if (!charFlushed && gap >= charGap){ decodeChar(); charFlushed = true; }
     if (!wordFlushed && gap >= wordGap){ addWordSpace(); wordFlushed = true; }
+    if (gap > 2 && pending.length) flushPending();                 // sender has paused
     if (gap > 10 && unit !== PRESET_UNIT) resetSpeed();            // long idle
   }
 
@@ -576,8 +759,12 @@ function drawFrame(){
   spCtx.beginPath(); spCtx.moveTo(0,yT); spCtx.lineTo(sp.width,yT); spCtx.stroke();
   spCtx.setLineDash([]);
 
-  const snr = 20*Math.log10(Math.max(ratio,1e-3));
-  document.getElementById('snr').textContent = isFinite(snr) ? snr.toFixed(0) : '—';
+  const nowMs = Date.now();
+  if (nowMs - lastPaint > 500){
+    lastPaint = nowMs;
+    const snr = 20*Math.log10(Math.max(snrAvg,1e-3));
+    setText(snrEl, snrAvg && isFinite(snr) ? snr.toFixed(0) : '—');
+  }
 }
 
 function autoTune(){
@@ -673,10 +860,10 @@ stopBtn.addEventListener('click', () => {
 document.getElementById('resetSpeed').addEventListener('click', resetSpeed);
 document.getElementById('autotune').addEventListener('click', autoTune);
 document.getElementById('clear').addEventListener('click', () => {
-  text = ''; charBits = []; updateText();
+  text = ''; charBits = []; pending = []; recentChars = []; updateText();
 });
 document.getElementById('copy').addEventListener('click', async () => {
-  try{ await navigator.clipboard.writeText(text); statusEl.textContent = 'Text copied'; }
+  try{ await navigator.clipboard.writeText(text + pending.map(p => p.c).join('')); statusEl.textContent = 'Text copied'; }
   catch{ statusEl.textContent = 'Copy blocked by the browser'; }
 });
 
@@ -684,6 +871,14 @@ document.getElementById('freq').addEventListener('input', e => setFreq(+e.target
 document.getElementById('sens').addEventListener('input', e => {
   sensitivity = +e.target.value/100;
   document.getElementById('sensVal').textContent = e.target.value + '%';
+  lastAvgErr = null; errWindow = [];          // hand control back to the operator
+});
+document.getElementById('autoSens').addEventListener('change', e => {
+  autoSens = e.target.checked; lastAvgErr = null; errWindow = [];
+});
+document.getElementById('buffered').addEventListener('change', e => {
+  buffered = e.target.checked;
+  if (!buffered) flushPending();        // switching off catches the text up at once
 });
 document.getElementById('preset').addEventListener('input', e => setPreset(+e.target.value));
 document.getElementById('toneTrack').addEventListener('change', e => toneTrack = e.target.checked);
