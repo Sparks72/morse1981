@@ -1,270 +1,699 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Morse Decoder</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-    }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 10px;
-    }
-    #controls {
-      margin-bottom: 10px;
-    }
-    button {
-      padding: 5px 10px;
-      margin-right: 5px;
-    }
-    #received {
-      width: 30%;
-      height: 200px;
-      resize: none;
-      font-family: monospace;
-    }
-    #signal {
-      border: 1px solid black;
-      margin-top: 10px;
-    }
-	#wpm-display {
-  margin-top: 10px;
-  font-size: 16px;
-  font-weight: bold;
-  color: #333;
-}
-
-#wpm-display.low { color: green; } /* 0–20 WPM */
-#wpm-display.medium { color: orange; } /* 21–30 WPM */
-#wpm-display.high { color: red; } /* >30 WPM */
-
-
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Morse Decoder DJ0CU / G4ADF</title>
+<style>
+  :root{
+    --bg:#10131a;
+    --panel:#171b24;
+    --line:#2a3140;
+    --ink:#d8dee9;
+    --dim2:#828b9d;
+    --key:#4fd6a0;
+    --warn:#e8b64c;
+    --hot:#e2665a;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:18px;
+    background:var(--bg); color:var(--ink);
+    font:15px/1.45 "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+  header{max-width:760px;margin:0 auto 14px}
+  h1{font-size:20px;font-weight:600;margin:0 0 2px;letter-spacing:.2px}
+  header p{margin:0;color:var(--dim2);font-size:13px}
+  main{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px}
+  #controls{display:flex;flex-wrap:wrap;gap:8px}
+  button{
+    font:inherit;font-size:15px;padding:10px 16px;min-width:104px;
+    background:#222836;color:var(--ink);border:1px solid var(--line);
+    border-radius:5px;cursor:pointer;
+  }
+  button:hover{background:#2b3142}
+  button:focus-visible{outline:2px solid var(--key);outline-offset:2px}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:#1d4a3c;border-color:#2c6b56;color:#c9f4e3}
+  .sliders{display:flex;flex-wrap:wrap;gap:18px;align-items:center}
+  .sliders label{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim2)}
+  input[type=range]{width:200px;accent-color:var(--key)}
+  .val{color:var(--ink);font-variant-numeric:tabular-nums;min-width:62px}
+  .wfwrap{position:relative;line-height:0}
+  .wfwrap #cursor{position:absolute;inset:0;background:transparent;pointer-events:none}
+  button.flash{background:#1d4a3c;border-color:#4fd6a0;color:#c9f4e3}
+  canvas{display:block;width:100%;border-radius:4px;background:#05070b}
+  #scale{height:26px;background:transparent}
+  #scope{height:44px;margin-top:6px}
+  textarea{
+    width:100%;height:190px;resize:vertical;
+    background:#05070b;color:var(--key);border:1px solid var(--line);border-radius:4px;
+    padding:10px;font:16px/1.6 Consolas,"DejaVu Sans Mono",monospace;
+  }
+  .readouts{display:flex;flex-wrap:wrap;gap:22px;align-items:baseline;font-size:14px;color:var(--dim2)}
+  .readouts b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+  .low b{color:var(--key)} .medium b{color:var(--warn)} .high b{color:var(--hot)}
+  .hint{color:var(--dim2);font-size:12.5px;margin:6px 0 0}
+</style>
 </head>
 <body>
-      <h1>Morse Code Decoder DJ0CU-G4ADF</h1>
-<h1>Inspired by Wireless World 1981 N. Kryiazis</h1>
+<header>
+  <h1>Morse Code Decoder — DJ0CU / G4ADF</h1>
+  <p>Timing after N. Kyriazis, “Morse decoding”, Wireless World, February 1981</p>
+</header>
 
-  <div id="controls">
-  <button id="start">Start</button>
-  <button id="stop">Stop</button>
-  <button id="reset">Reset</button>
-  <button id="clear">Clear Text</button>
-</div>
-<div id="wpm-display">Speed: 17 WPM</div> <!-- New WPM display -->
-  <div>
-    <textarea id="received" readonly></textarea>
+<main>
+  <div class="panel" id="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="autotune">Auto tune</button>
+    <button id="resetSpeed">Reset speed</button>
+    <button id="clear">Clear text</button>
+    <button id="copy">Copy text</button>
   </div>
-  <div>
-    <canvas id="signal" width="200" height="50"></canvas>
+
+  <div class="panel">
+    <div class="wfwrap">
+      <canvas id="waterfall" width="720" height="190"></canvas>
+      <canvas id="cursor" width="720" height="190"></canvas>
+    </div>
+    <canvas id="scale" width="720" height="26"></canvas>
+    <canvas id="scope" width="720" height="44"></canvas>
+    <p class="hint">Click the waterfall to tune onto the tone. The green trace is the detector output; the dashed line is the decision level.</p>
   </div>
-  <progress id="wpm-progress" max="50" value="17"></progress>
-  <script>
-    // Morse code dictionary: '.' for dit (1), '-' for dash (0)
-    const morseTable = {
-      '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E', '..-.': 'F', '--.': 'G', '....': 'H',
-      '..': 'I', '.---': 'J', '-.-': 'K', '.-..': 'L', '--': 'M', '-.': 'N', '---': 'O', '.--.': 'P',
-      '--.-': 'Q', '.-.': 'R', '...': 'S', '-': 'T', '..-': 'U', '...-': 'V', '.--': 'W', '-..-': 'X',
-      '-.--': 'Y', '--..': 'Z', '-----': '0', '.----': '1', '..---': '2', '...--': '3', '....-': '4',
-      '.....': '5', '-....': '6', '--...': '7', '---..': '8', '----.': '9', '.-.-.-': '.', '--..--': ',',
-      '..--..': '?', '-.-.-.': ';', '-..-.': '/', '-...-': '-', '-...-': '=', '.-..-.': '"', '-.-..': '<',
-      '.-...': '>', '---...': ':', '-.--.': '(',
-			  '.-.-': 'Ä',
-            '..--': 'Ü',  
-            '---.': 'Ö',  
-            '...--..': 'SS',
-			'.-.-.': 'AR',
-			'...-.-': 'SK'
-    };
 
-    // Audio and state variables
-    let audioContext;
-    let analyser;
-    let microphone;
-    let threshold = 0.05; // RMS threshold, may need adjustment
-    let currentState = 'space';
-    let lastStateChangeTime = 0;
-    let unitTime = 0.07; // 70ms for 17 wpm
-    let char = []; // Array to build current character
-    let receivedText = '';
-    let noToneTimer = null;
-    let interval = null;
+  <div class="panel sliders">
+    <label>Tone <input type="range" id="freq" min="300" max="1200" step="5" value="700"><span class="val" id="freqVal">700 Hz</span></label>
+    <label>Sensitivity <input type="range" id="sens" min="15" max="75" step="1" value="60"><span class="val" id="sensVal">60%</span></label>
+    <label>Start speed <input type="range" id="preset" min="8" max="40" step="1" value="21"><span class="val" id="presetVal">21 WPM</span></label>
+    <label><input type="checkbox" id="toneTrack" checked> Follow the tone</label>
+    <label><input type="checkbox" id="fastLock" checked> Fast speed lock</label>
+    <label><input type="checkbox" id="holdOutput" checked> Hold output until locked</label>
+  </div>
 
-    // Canvas for tuning visuals
-    const signalCanvas = document.getElementById('signal');
-    const signalCtx = signalCanvas.getContext('2d');
+  <textarea id="received" readonly placeholder="Decoded text appears here."></textarea>
 
-// Update WPM display based on unitTime
-function updateWPM() {
-  const wpm = Math.round(1.2 / unitTime);
-  const display = document.getElementById('wpm-display');
-  display.textContent = `Speed: ${wpm} WPM`;
-  display.className = wpm <= 20 ? 'low' : wpm <= 30 ? 'medium' : 'high';
+  <div class="panel readouts" id="readouts">
+    <span>Speed <b id="wpm">17</b> WPM</span>
+    <span>Unit <b id="unitMs">70</b> ms</span>
+    <span>Signal <b id="snr">—</b> dB</span>
+    <span>Lock <b id="fit">—</b></span>
+    <span id="status">Stopped</span>
+  </div>
+</main>
+
+<script>
+/* ------------------------------------------------------------------
+   Morse table.  '.' = dit (logic 1), '-' = dah (logic 0), as in the
+   1981 article where CHAR holds the character as a bit pattern.
+------------------------------------------------------------------ */
+const MORSE = {
+  '.-':'A','-...':'B','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H',
+  '..':'I','.---':'J','-.-':'K','.-..':'L','--':'M','-.':'N','---':'O','.--.':'P',
+  '--.-':'Q','.-.':'R','...':'S','-':'T','..-':'U','...-':'V','.--':'W','-..-':'X',
+  '-.--':'Y','--..':'Z',
+  '-----':'0','.----':'1','..---':'2','...--':'3','....-':'4',
+  '.....':'5','-....':'6','--...':'7','---..':'8','----.':'9',
+  '.-.-.-':'.','--..--':',','..--..':'?','.----.':"'",'-.-.--':'!','-..-.':'/',
+  '-.--.':'(','-.--.-':')','.-...':'<AS>','---...':':','-.-.-.':';','-...-':'=',
+  '.-.-.':'<AR>','-....-':'-','..--.-':'_','.-..-.':'"','...-..-':'$','.--.-.':'@',
+  '...-.-':'<SK>','-.-.-':'<KA>','...---...':'<SOS>','........':'<ERR>',
+  '.-.-':'Ä','---.':'Ö','..--':'Ü','...--..':'ß','----':'CH'
+};
+
+/* ------------------------------------------------------------------
+   Timing state — the article's MARK, SPACE, UNIT and CHAR
+------------------------------------------------------------------ */
+let PRESET_UNIT = 1.2/21;         // starting UNIT, set by the Start speed slider
+const MIN_UNIT = 1.2/45;          // 45 WPM ceiling
+const MAX_UNIT = 1.2/8;           // 8 WPM floor
+const POLL_MS  = 4;               // detector sampling interval
+const VOTES    = 5;               // five samples, majority wins (as in the article)
+const ENV_N    = 512;             // envelope window, samples (~11 ms)
+
+let unit = PRESET_UNIT;
+let toneTrack = true, fastLock = true, holdOutput = true;
+let locked = false;            // the fit has committed to a speed
+let toneState = 'space';          // debounced state
+let lastEdge = 0;                 // time of the last debounced edge
+let markEndTime = 0;              // when the last valid mark segment ended
+let accumMark = 0;                // MARK counter (seconds)
+let markOpen = false;             // an element is still being measured
+let tooLong = false;              // mark exceeded eight units
+let charBits = [];                // CHAR
+let text = '';
+let charFlushed = true, wordFlushed = true;
+let votes = [];
+
+/* ------------------------------------------------------------------
+   Audio
+------------------------------------------------------------------ */
+let audioCtx = null, stream = null, srcNode = null;
+let specAn = null, envAn = null;
+let specData = null, envData = null, envBuf = null;
+let pollTimer = null, rafId = null;
+
+let targetFreq = 700, userFreq = 700;
+let sensitivity = 0.60;
+let level = 0, refLevel = 0, ratio = 0, threshOn = 0, threshOff = 0;
+let envMax = 0, envMin = 0, levelS = 0, envSeeded = false;
+let peakLevel = 1e-3;                 // scope scaling only
+
+function seedAGC(){
+  refLevel = 0; peakLevel = 1e-3; votes = []; envSeeded = false;
 }
 
-    // Initialize audio context and microphone input
-    async function startAudio() {
-      audioContext = new AudioContext();
-      await audioContext.resume();
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512; // ~5.8ms at 44.1kHz sample rate
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
-      } catch (err) {
-        console.error('Error accessing microphone:', err);
-      }
+const F_MIN = 300, F_MAX = 1200;   // waterfall span
+
+const wf = document.getElementById('waterfall'), wfCtx = wf.getContext('2d');
+const cu = document.getElementById('cursor'), cuCtx = cu.getContext('2d');
+const sc = document.getElementById('scale'), scCtx = sc.getContext('2d');
+const sp = document.getElementById('scope'), spCtx = sp.getContext('2d');
+let scopeTrace = new Array(sp.width).fill(0);
+let scopeState = new Array(sp.width).fill(0);
+
+wfCtx.fillStyle = '#05070b'; wfCtx.fillRect(0,0,wf.width,wf.height);
+
+async function startAudio(){
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+  });
+  srcNode = audioCtx.createMediaStreamSource(stream);
+
+  specAn = audioCtx.createAnalyser();
+  specAn.fftSize = 4096;                 // ~11 Hz bins for tuning
+  specAn.smoothingTimeConstant = 0.35;
+  specData = new Uint8Array(specAn.frequencyBinCount);
+
+  envAn = audioCtx.createAnalyser();
+  envAn.fftSize = ENV_N;                 // ~5 ms window for the envelope
+  envAn.smoothingTimeConstant = 0;
+  envData = new Uint8Array(envAn.fftSize);
+  envBuf  = new Float32Array(envAn.fftSize);
+
+  srcNode.connect(specAn);
+  srcNode.connect(envAn);
+
+  const now = audioCtx.currentTime;
+  lastEdge = now; markEndTime = now;
+  votes = []; toneState = 'space';
+  seedAGC();
+}
+
+function stopAudio(){
+  if (pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+  if (rafId){ cancelAnimationFrame(rafId); rafId = null; }
+  if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (audioCtx){ audioCtx.close(); audioCtx = null; }
+  srcNode = specAn = envAn = null;
+}
+
+/* Goertzel magnitude at one frequency, Hann windowed */
+function goertzel(freq, sr){
+  const N = ENV_N;
+  const coeff = 2*Math.cos(2*Math.PI*freq/sr);
+  let s1 = 0, s2 = 0;
+  for (let i=0;i<N;i++){ const s0 = envBuf[i] + coeff*s1 - s2; s2 = s1; s1 = s0; }
+  const power = s1*s1 + s2*s2 - coeff*s1*s2;
+  return Math.sqrt(Math.max(power,0)) / (N/4);
+}
+
+/* Tone level, plus the level either side of it.  Deciding on the ratio
+   between the two is what the NE567 in the original article did: it is
+   immune to the microphone gain, to fades, and to broadband noise. */
+function measure(){
+  envAn.getByteTimeDomainData(envData);
+  const N = ENV_N, sr = audioCtx.sampleRate;
+  for (let i=0;i<N;i++){
+    const w = 0.5 - 0.5*Math.cos(2*Math.PI*i/(N-1));
+    envBuf[i] = ((envData[i]/128)-1) * w;
+  }
+  const lo = Math.max(200, targetFreq-280), hi = Math.min(1900, targetFreq+280);
+  return {
+    mag: goertzel(targetFreq, sr),
+    ref: (goertzel(lo, sr) + goertzel(hi, sr))/2 + 1e-7
+  };
+}
+
+/* ------------------------------------------------------------------
+   Detector: adaptive threshold plus a five-sample majority vote.
+   This replaces the fixed RMS threshold of the earlier version.
+------------------------------------------------------------------ */
+function detect(){
+  const m = measure();
+  level = m.mag;
+  refLevel = refLevel ? refLevel*0.97 + m.ref*0.03 : m.ref;
+  ratio = level / Math.max(refLevel, 1e-7);
+
+  // Smooth the envelope (~7 ms) before comparing it with anything, so sample
+  // noise cannot chatter across the decision level part way down a decay.
+  const a = Math.min(0.9, Math.max(0.3, 1 - Math.exp(-POLL_MS/(100*unit))));
+  levelS = envSeeded ? levelS*(1-a) + level*a : level;
+
+  // Envelope trackers on the tone itself: instant one way, ~0.9 s the other.
+  if (!envSeeded){ envMax = envMin = levelS = level; envSeeded = true; }
+  if (levelS > envMax) envMax = levelS; else envMax += (levelS-envMax)*(POLL_MS/900);
+  if (levelS < envMin) envMin = levelS; else envMin += (levelS-envMin)*(POLL_MS/900);
+
+  // The decision sits part way up the gap between key-down and key-up levels,
+  // so a decaying tone still releases cleanly.  Sensitivity moves it down.
+  const span = envMax - envMin;
+  const frac = 0.80 - (sensitivity-0.15)*0.67;   // 0.8 down to 0.4 across the slider
+  const mid  = envMin + span*frac;
+  threshOn  = mid + span*0.06;
+  threshOff = mid - span*0.06;
+
+  let raw;
+  const keyed = envMax > 3*Math.max(envMin,1e-9) && envMax > 2*refLevel;
+  if (!keyed) raw = 0;                                   // no keyed tone present
+  else if (toneState === 'mark') raw = levelS > threshOff ? 1 : 0;
+  else raw = levelS > threshOn ? 1 : 0;
+
+  votes.push(raw);
+  if (level > peakLevel) peakLevel = level;              // scope scaling only
+  else peakLevel = peakLevel*0.999 + level*0.001;
+  if (votes.length > VOTES) votes.shift();
+  const sum = votes.reduce((a,b)=>a+b,0);
+  if (votes.length < VOTES) return toneState;
+  return sum >= Math.ceil(VOTES/2) ? 'mark' : 'space';
+}
+
+/* ------------------------------------------------------------------
+   The flow chart, in time rather than counters
+------------------------------------------------------------------ */
+function onEdge(newState, t){
+  const d = t - lastEdge;
+  lastEdge = t;
+
+  if (newState === 'space'){
+    // a mark segment has just ended
+    if (d < 0.5*(unit+bias) && !markOpen) return;   // isolated blip: interference, gap runs on
+    accumMark += d;
+    markOpen = true;
+    markEndTime = t;
+    if (accumMark > 8*unit) tooLong = true;     // calibrator or key down: reset on next space
+  } else {
+    // a space segment has just ended
+    if (d < minGap()){                          // short break: add the space to the mark
+      if (markOpen) accumMark += d;
+      return;
     }
+    const gap = t - markEndTime;                // whole gap, including merged blips
+    if (markOpen) closeMark();
+    if (gap < 12*unit) pushSample(recentGaps, gap);
+    if (!fastLock && gap < 1.5*unit) adaptUnit(gap);   // UNIT = (UNIT + SPACE)/2
+    charFlushed = false;
+    wordFlushed = false;
+  }
+}
 
-    // Calculate RMS of current audio buffer
-    function getRMS() {
-      const bufferLength = analyser.fftSize;
-      const dataArray = new Uint8Array(bufferLength);
-      analyser.getByteTimeDomainData(dataArray);
-      let sum = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        const sample = (dataArray[i] / 128) - 1; // Normalize to [-1, 1]
-        sum += sample * sample;
-      }
-      return Math.sqrt(sum / bufferLength);
+/* Shortest gap still counted as a real space.  The article uses half a unit;
+   a decaying tone clips gaps by `bias`, so allow for that, with the debounce
+   window as the floor. */
+function minGap(){
+  return Math.max(0.5*unit - bias, Math.max(0.25*unit, VOTES*POLL_MS/1000));
+}
+
+function closeMark(){
+  if (tooLong){                                 // wait for space, then return to start
+    accumMark = 0; markOpen = false; tooLong = false;
+    charBits = [];
+    unit = PRESET_UNIT; updateReadouts();
+    return;
+  }
+  const isDah = accumMark > 2*unit + bias;
+  charBits.push(isDah ? '-' : '.');
+  pushSample(recentMarks, accumMark);
+  if (fastLock && (++sinceFit >= 3 || recentMarks.length < 14)) relock(0.4);
+  accumMark = 0; markOpen = false;
+}
+
+/* ------------------------------------------------------------------
+   Speed estimation.
+
+   The article adapts UNIT only from inter-element spaces, which is
+   one-sided: if the sender is slower than UNIT, every gap measures more
+   than 1.5 units, is read as a character space, and never feeds the
+   adaptation at all.  So the decoder can speed up but cannot slow down,
+   which is why dropping the sending speed loses lock so quickly.
+
+   Instead, fit the last few seconds of marks and spaces against the
+   whole 1 : 3 : 7 pattern and take the speed that fits best.  This works
+   in both directions and does not depend on the current UNIT being right.
+------------------------------------------------------------------ */
+const FIT_LEN = 36;
+let recentMarks = [], recentGaps = [], sinceFit = 0, lastFitWpm = 0, lastFitErr = 1;
+let bias = 0;        // seconds by which the detector stretches marks and clips gaps
+
+function pushSample(buf, v){
+  buf.push(v);
+  if (buf.length > FIT_LEN) buf.shift();
+}
+
+/* A decaying tone — room acoustics, a slow AGC, a soft keyed transmitter —
+   releases the detector late, so every mark measures long and every gap
+   measures short by about the same amount.  Fit that offset as well as the
+   speed, then take it out of the decision thresholds. */
+function fitError(u, d){
+  let err = 0, n = 0;
+  for (const m of recentMarks){                       // marks are 1 or 3 units, plus d
+    err += Math.min(Math.abs(m-(u+d)), Math.abs(m-(3*u+d)))/u;
+    n++;
+  }
+  for (const g of recentGaps){                        // gaps are 1, 3 or 7 units, less d
+    err += Math.min(Math.abs(g-(u-d)), Math.abs(g-(3*u-d)), Math.abs(g-(7*u-d)))/u;
+    n++;
+  }
+  return n ? err/n : 1;
+}
+
+function bestUnit(){
+  let bestU = unit, bestD = bias, bestE = Infinity;
+  for (let wpm = 8; wpm <= 45; wpm += 0.5){
+    const u = 1.2/wpm;
+    for (let k = -2; k <= 8; k++){
+      const d = u*k/16;
+      const e = fitError(u, d);
+      if (e < bestE){ bestE = e; bestU = u; bestD = d; }
     }
+  }
+  lastFitWpm = Math.round(1.2/bestU);
+  lastFitErr = bestE;
+  return { u: bestU, d: bestD };
+}
 
-    // Process audio input and decode Morse
-    function processAudio() {
-      if (!audioContext) return;
-      const rms = getRMS();
-      const isMark = rms > threshold;
-      const currentTime = audioContext.currentTime;
-     
-      if (isMark) {
-        if (currentState === 'space') {
-          const spaceDuration = currentTime - lastStateChangeTime;
-          processSpace(spaceDuration);
-          lastStateChangeTime = currentTime;
-          currentState = 'mark';
-        }
-      } else {
-        if (currentState === 'mark') {
-          const markDuration = currentTime - lastStateChangeTime;
-          processMark(markDuration);
-          lastStateChangeTime = currentTime;
-          currentState = 'space';
-        }
-      }
+function relock(weight){
+  sinceFit = 0;
+  if (recentMarks.length < 6) return 'wait';          // not enough evidence yet
+  const fit = bestUnit();
+  if (lastFitErr > 0.45) return 'poor';               // fit too poor to trust
+  const w = Math.abs(fit.u-unit) > 0.3*unit ? Math.min(1, weight*2) : weight;
+  unit = Math.min(MAX_UNIT, Math.max(MIN_UNIT, unit*(1-w) + fit.u*w));
+  bias = bias*(1-w) + fit.d*w;
+  if (!locked && (lastFitErr <= 0.30 || (recentMarks.length >= 20 && lastFitErr <= 0.45))){
+    locked = true;
+    if (audioCtx) statusEl.textContent = 'Locked';
+  }
+  updateReadouts();
+  return 'ok';
+}
 
-      // Handle no-tone reset
-      if (currentState === 'space') {
-        if (!noToneTimer) {
-          noToneTimer = setTimeout(resetToDefault, 1500);
-        }
-      } else if (noToneTimer) {
-        clearTimeout(noToneTimer);
-        noToneTimer = null;
-      }
+function adaptUnit(gap){
+  const u = (unit + gap)/2;                           // the article's rule
+  unit = Math.min(MAX_UNIT, Math.max(MIN_UNIT, u));
+  updateReadouts();
+}
 
-      // Update tuning visual
-      signalCtx.clearRect(0, 0, signalCanvas.width, signalCanvas.height);
-      signalCtx.fillStyle = 'green';
-      const barWidth = Math.min(rms * 1000, signalCanvas.width); // Scale RMS
-      signalCtx.fillRect(0, 0, barWidth, 50);
+function decodeChar(){
+  if (!charBits.length) return;
+  const code = charBits.join('');
+  const ch = MORSE[code] || '*';
+  charBits = [];
+  // Before the speed fit has committed, the characters are guesswork against
+  // the wrong UNIT.  Measure them, but do not print them.
+  if (holdOutput && !locked){ checkLostLock(ch); return; }
+  text += ch;
+  updateText();
+  checkLostLock(ch);
+}
+
+/* A run of one-element and repeated-element characters (E T I M S O H 5 0 *)
+   means UNIT no longer matches the sender.  Re-fit at full weight. */
+const DEGENERATE = 'ETIMSOH50*';
+let degRun = 0;
+function checkLostLock(ch){
+  if (ch.length === 1 && DEGENERATE.includes(ch)) degRun++;
+  else degRun = 0;
+  if (degRun >= 8){
+    degRun = 0;
+    // Only start again if the fit was genuinely judged and found wanting.
+    // Clearing the buffers while they are still filling would throw away the
+    // very measurements needed to recover.
+    if (relock(1) === 'poor'){
+      recentMarks = []; recentGaps = [];
+      unit = PRESET_UNIT; bias = 0; locked = false;
+      if (audioCtx) statusEl.textContent = 'Finding the speed';
+      updateReadouts();
     }
+  }
+}
 
-    // Process mark duration per document timing
-    function processMark(duration) {
-      const units = duration / unitTime;
-   
-	  if (units < 0.5) return; // Ignore interference
-      if (units <= 2) {
-        char.push('1'); // Dit
-      } else if (units <= 8) {
-        char.push('0'); // Dash (max 8 units)
-      }
-   
+function addWordSpace(){
+  if (holdOutput && !locked) return;
+  if (text && !text.endsWith(' ')){ text += ' '; updateText(); }
+}
+
+function updateText(){
+  const ta = document.getElementById('received');
+  ta.value = text;
+  ta.scrollTop = ta.scrollHeight;
+}
+
+function resetSpeed(){
+  unit = PRESET_UNIT; charBits = []; accumMark = 0; markOpen = false; tooLong = false;
+  recentMarks = []; recentGaps = []; degRun = 0; lastFitWpm = 0;
+  bias = 0; locked = false;
+  if (audioCtx) statusEl.textContent = 'Finding the speed';
+  updateReadouts();
+}
+
+function updateReadouts(){
+  const wpm = Math.round(1.2/unit);
+  document.getElementById('wpm').textContent = wpm;
+  document.getElementById('unitMs').textContent = Math.round(unit*1000);
+  const fit = document.getElementById('fit');
+  if (fit){
+    fit.textContent = lastFitWpm ? lastFitWpm + ' WPM, fit ' + lastFitErr.toFixed(2) : '—';
+    fit.style.color = lastFitWpm ? (lastFitErr < 0.25 ? '#4fd6a0' : lastFitErr < 0.45 ? '#e8b64c' : '#e2665a') : '';
+  }
+  const box = document.getElementById('readouts');
+  box.className = 'panel readouts ' + (wpm <= 20 ? 'low' : wpm <= 30 ? 'medium' : 'high');
+}
+
+/* ------------------------------------------------------------------
+   Poll loop
+------------------------------------------------------------------ */
+function tick(){
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const s = detect();
+
+  if (s !== toneState){ toneState = s; onEdge(s, t); }
+
+  if (toneState === 'space'){
+    const gap = t - markEndTime;
+    const charGap = Math.max(1.5*unit - bias, 0.6*unit);
+    const wordGap = Math.max(4*unit - bias, 2.5*unit);
+    if (markOpen && gap >= minGap()) closeMark();                  // valid space: element ends
+    if (!charFlushed && gap >= charGap){ decodeChar(); charFlushed = true; }
+    if (!wordFlushed && gap >= wordGap){ addWordSpace(); wordFlushed = true; }
+    if (gap > 10 && unit !== PRESET_UNIT) resetSpeed();            // long idle
   }
 
- let unitTimeHistory = [];
-const historyLength = 5;
-function processSpace(duration) {
-  const units = duration / unitTime;
-  if (units < 0.5) return;
-  if (units < 1.5) {
-    unitTimeHistory.push(duration);
-    if (unitTimeHistory.length > historyLength) unitTimeHistory.shift();
-    unitTime = unitTimeHistory.reduce((a, b) => a + b, 0) / unitTimeHistory.length;
-    updateWPM();
-  } else if (units < 4) {
-    // Inter-character space
-    decodeCharacter();
-    char = [];
-  } else if (units >= 4) {
-    // Word space
-    if (char.length > 0) {
-      decodeCharacter();
-      receivedText += ' ';
-      updateDisplay();
-    }
-    char = [];
+  scopeTrace.push(level); scopeTrace.shift();
+  scopeState.push(toneState === 'mark' ? 1 : 0); scopeState.shift();
+}
+
+/* ------------------------------------------------------------------
+   Waterfall, frequency scale and envelope scope
+------------------------------------------------------------------ */
+function heat(v){
+  // 0..1 -> dark blue / teal / green / amber / white
+  const stops = [[5,7,11],[12,40,70],[16,100,110],[70,170,90],[220,180,60],[255,250,235]];
+  const x = Math.max(0, Math.min(0.999, v)) * (stops.length-1);
+  const i = Math.floor(x), f = x - i;
+  const a = stops[i], b = stops[i+1];
+  return `rgb(${a[0]+(b[0]-a[0])*f|0},${a[1]+(b[1]-a[1])*f|0},${a[2]+(b[2]-a[2])*f|0})`;
+}
+
+function drawCursor(){
+  cuCtx.clearRect(0,0,cu.width,cu.height);
+  const x = f2x(targetFreq);
+  cuCtx.fillStyle = 'rgba(79,214,160,.10)';          // the band the detector listens over
+  cuCtx.fillRect(f2x(targetFreq-60), 0, f2x(targetFreq+60)-f2x(targetFreq-60), cu.height);
+  cuCtx.strokeStyle = '#4fd6a0'; cuCtx.lineWidth = 1;
+  cuCtx.beginPath(); cuCtx.moveTo(x+0.5,0); cuCtx.lineTo(x+0.5,cu.height); cuCtx.stroke();
+}
+
+function f2x(f){ return (f-F_MIN)/(F_MAX-F_MIN)*cu.width; }
+
+function drawScale(){
+  scCtx.clearRect(0,0,sc.width,sc.height);
+  scCtx.font = '11px Consolas, monospace';
+  scCtx.fillStyle = '#828b9d';
+  scCtx.strokeStyle = '#2a3140';
+  scCtx.beginPath();
+  for (let f=F_MIN; f<=F_MAX; f+=100){
+    const x = (f-F_MIN)/(F_MAX-F_MIN)*sc.width;
+    scCtx.moveTo(x+0.5,0); scCtx.lineTo(x+0.5,6);
+    scCtx.fillText(String(f), Math.min(x+3, sc.width-26), 17);
   }
+  scCtx.stroke();
+  const xt = (targetFreq-F_MIN)/(F_MAX-F_MIN)*sc.width;
+  scCtx.fillStyle = '#4fd6a0';
+  scCtx.beginPath();
+  scCtx.moveTo(xt, 9); scCtx.lineTo(xt-6, 0); scCtx.lineTo(xt+6, 0);
+  scCtx.closePath(); scCtx.fill();
 }
 
-   // Decode the current character
-function decodeCharacter() {
-  if (char.length === 0) return;
-  const morseCode = char.map(bit => bit === '1' ? '.' : '-').join('');
-  const character = morseTable[morseCode] || '*';
-  receivedText += character;
-  
-  // Check for 'TTT' or 'EEE' in the last three characters
-  if (receivedText.length >= 3) {
-    const lastThree = receivedText.slice(-3);
-    if (lastThree === 'TTT' || lastThree === 'EEE') {
-      resetToDefault();
-    }
- 
+function drawFrame(){
+  rafId = requestAnimationFrame(drawFrame);
+  if (!specAn) return;
+
+  specAn.getByteFrequencyData(specData);
+  const binHz = audioCtx.sampleRate / specAn.fftSize;
+
+  trackTone();
+
+  wfCtx.drawImage(wf, 0, 1);                       // scroll down one line
+  for (let x=0; x<wf.width; x++){
+    const f = F_MIN + (F_MAX-F_MIN)*x/wf.width;
+    const v = specData[Math.round(f/binHz)] / 255;
+    wfCtx.fillStyle = heat(v*v*1.35);
+    wfCtx.fillRect(x, 0, 1, 1);
   }
-  
-  updateDisplay();
+
+  // envelope scope
+  spCtx.fillStyle = '#05070b'; spCtx.fillRect(0,0,sp.width,sp.height);
+  const span = Math.max(peakLevel*1.25, 1e-5);
+  spCtx.fillStyle = 'rgba(79,214,160,.16)';
+  for (let x=0;x<sp.width;x++) if (scopeState[x]) spCtx.fillRect(x,0,1,sp.height);
+  spCtx.strokeStyle = '#4fd6a0'; spCtx.lineWidth = 1; spCtx.beginPath();
+  for (let x=0;x<sp.width;x++){
+    const y = sp.height - Math.min(scopeTrace[x]/span,1)*(sp.height-3) - 1.5;
+    x ? spCtx.lineTo(x,y) : spCtx.moveTo(x,y);
+  }
+  spCtx.stroke();
+  const yT = sp.height - Math.min(threshOn/span,1)*(sp.height-3) - 1.5;
+  spCtx.strokeStyle = '#e8b64c'; spCtx.setLineDash([4,4]);
+  spCtx.beginPath(); spCtx.moveTo(0,yT); spCtx.lineTo(sp.width,yT); spCtx.stroke();
+  spCtx.setLineDash([]);
+
+  const snr = 20*Math.log10(Math.max(ratio,1e-3));
+  document.getElementById('snr').textContent = isFinite(snr) ? snr.toFixed(0) : '—';
 }
 
-    // Update the text area display
-    function updateDisplay() {
-      document.getElementById('received').value = receivedText;
-    }
-
-    // Reset to default settings (17 wpm)
-   function resetToDefault() {
-  unitTime = 0.07;
-  char = [];
-  updateWPM(); // Update WPM display
+function autoTune(){
+  const btn = document.getElementById('autotune');
+  if (!specAn){
+    statusEl.textContent = 'Press Start first, then Auto tune';
+    return;
+  }
+  specAn.getByteFrequencyData(specData);
+  const binHz = audioCtx.sampleRate / specAn.fftSize;
+  let best = 0, bestBin = -1;
+  for (let b = Math.round(F_MIN/binHz); b <= Math.round(F_MAX/binHz); b++){
+    if (specData[b] > best){ best = specData[b]; bestBin = b; }
+  }
+  if (bestBin < 0 || best < 60){
+    statusEl.textContent = 'No tone found — is anything being sent?';
+    return;
+  }
+  setFreq(Math.round(bestBin*binHz));
+  statusEl.textContent = 'Tuned to ' + Math.round(targetFreq) + ' Hz';
+  btn.classList.add('flash');
+  setTimeout(() => btn.classList.remove('flash'), 700);
 }
 
-    // Event listeners for buttons
-    document.getElementById('start').addEventListener('click', async () => {
-      await startAudio();
-      if (!interval) {
-        interval = setInterval(processAudio, 5); // Check every 5ms
-      }
-    });
+function showFreq(){
+  document.getElementById('freq').value = Math.round(targetFreq);
+  document.getElementById('freqVal').textContent = Math.round(targetFreq) + ' Hz';
+  drawScale();
+  drawCursor();
+}
 
-    document.getElementById('stop').addEventListener('click', () => {
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-      if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-      }
-    });
+function setFreq(f){
+  targetFreq = Math.max(F_MIN, Math.min(F_MAX, f));
+  userFreq = targetFreq;
+  if (audioCtx) seedAGC();
+  showFreq();
+}
 
-    document.getElementById('reset').addEventListener('click', resetToDefault);
-   document.getElementById('reset').addEventListener('click', resetToDefault);
-    document.getElementById('clear').addEventListener('click', () => {
-      receivedText = '';
-      updateDisplay();
-    });
-  </script>
+/* Follow the tone: while a mark is present, nudge toward the strongest
+   bin within ±120 Hz.  Handles drift and small tuning errors by itself. */
+function trackTone(){
+  if (!toneTrack || toneState !== 'mark' || ratio < 3) return;
+  const binHz = audioCtx.sampleRate / specAn.fftSize;
+  const lo = Math.round((targetFreq-100)/binHz), hi = Math.round((targetFreq+100)/binHz);
+  let best = 0, bestBin = -1;
+  for (let b = Math.max(1,lo); b <= hi; b++){
+    if (specData[b] > best){ best = specData[b]; bestBin = b; }
+  }
+  if (bestBin < 0 || best < 120) return;
+  const f = bestBin*binHz;
+  if (Math.abs(f-targetFreq) < binHz) return;
+  let t = targetFreq + 0.15*(f-targetFreq);
+  t = Math.max(userFreq-70, Math.min(userFreq+70, t));   // never wander far from the slider
+  targetFreq = Math.max(F_MIN, Math.min(F_MAX, t));
+  showFreq();
+}
+
+function setPreset(wpm){
+  PRESET_UNIT = 1.2/wpm;
+  document.getElementById('presetVal').textContent = wpm + ' WPM';
+  if (!audioCtx || !charBits.length) { unit = PRESET_UNIT; updateReadouts(); }
+}
+
+/* ------------------------------------------------------------------
+   Controls
+------------------------------------------------------------------ */
+const startBtn = document.getElementById('start');
+const stopBtn  = document.getElementById('stop');
+const statusEl = document.getElementById('status');
+
+startBtn.addEventListener('click', async () => {
+  if (audioCtx) return;
+  startBtn.disabled = true;
+  try{
+    await startAudio();
+    pollTimer = setInterval(tick, POLL_MS);
+    drawFrame();
+    stopBtn.disabled = false;
+    statusEl.textContent = 'Finding the speed';
+  }catch(err){
+    startBtn.disabled = false;
+    statusEl.textContent = 'No microphone: ' + err.message;
+  }
+});
+
+stopBtn.addEventListener('click', () => {
+  stopAudio();
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  statusEl.textContent = 'Stopped';
+});
+
+document.getElementById('resetSpeed').addEventListener('click', resetSpeed);
+document.getElementById('autotune').addEventListener('click', autoTune);
+document.getElementById('clear').addEventListener('click', () => {
+  text = ''; charBits = []; updateText();
+});
+document.getElementById('copy').addEventListener('click', async () => {
+  try{ await navigator.clipboard.writeText(text); statusEl.textContent = 'Text copied'; }
+  catch{ statusEl.textContent = 'Copy blocked by the browser'; }
+});
+
+document.getElementById('freq').addEventListener('input', e => setFreq(+e.target.value));
+document.getElementById('sens').addEventListener('input', e => {
+  sensitivity = +e.target.value/100;
+  document.getElementById('sensVal').textContent = e.target.value + '%';
+});
+document.getElementById('preset').addEventListener('input', e => setPreset(+e.target.value));
+document.getElementById('toneTrack').addEventListener('change', e => toneTrack = e.target.checked);
+document.getElementById('fastLock').addEventListener('change', e => fastLock = e.target.checked);
+document.getElementById('holdOutput').addEventListener('change', e => holdOutput = e.target.checked);
+wf.addEventListener('click', e => {
+  const r = wf.getBoundingClientRect();
+  setFreq(Math.round(F_MIN + (F_MAX-F_MIN)*(e.clientX-r.left)/r.width));
+});
+
+setFreq(700);
+setPreset(21);
+updateReadouts();
+updateText();
+</script>
 </body>
 </html>
