@@ -1,6 +1,6 @@
 # Morse Code Decoder — DJ0CU / G4ADF
 
-**🚀 [Live Demo](https://sparks72.github.io/Morse1981/) — runs in your browser, nothing to install.**
+**🚀 [Live Demo](https://sparks72.github.io/morse1981/) — runs in your browser, nothing to install.**
 Press **Start**, allow the microphone, and play CW at it.
 
 A browser-based CW decoder. It listens on the sound card, shows a waterfall for
@@ -15,7 +15,7 @@ issue is scanned at
 
 ## Running it
 
-The simplest way is the [live demo](https://sparks72.github.io/Morse-Decoder/):
+The simplest way is the [live demo](https://sparks72.github.io/morse1981/):
 it is served over https, so every browser will offer microphone access.
 
 To run it locally, open `index.html` and press **Start**, then allow microphone
