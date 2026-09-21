@@ -1,6 +1,9 @@
 # Morse Code Decoder — DJ0CU / G4ADF
 
-A browser-based CW decoder. It listens on the sound card, Rig loud speaker and phone loud speaker etc. Shows a waterfall for
+**🚀 [Live Demo](https://sparks72.github.io/Morse-Decoder/) — runs in your browser, nothing to install.**
+Press **Start**, allow the microphone, and play CW at it.
+
+A browser-based CW decoder. It listens on the sound card, shows a waterfall for
 tuning, and prints decoded text. One self-contained `index.html` file, no
 install, no libraries.
 
@@ -12,9 +15,13 @@ issue is scanned at
 
 ## Running it
 
-Open `index.html` and press **Start**, then allow microphone access when
-prompted. If Firefox, Chrome or Edge treat `file://` as an insecure origin and refuse the microphone without
-any visible error, so under those circumstances serve the file instead:
+The simplest way is the [live demo](https://sparks72.github.io/Morse-Decoder/):
+it is served over https, so every browser will offer microphone access.
+
+To run it locally, open `index.html` and press **Start**, then allow microphone
+access when prompted. Firefox will prompt for a file opened directly from disk;
+Chrome and Edge treat `file://` as an insecure origin and refuse the microphone
+without any visible error, so under those serve the file instead:
 
     python -m http.server 8000
 
@@ -142,7 +149,7 @@ floor), starting from 21 WPM:
 
 One character is lost while the fit commits. With 8% timing jitter and a click
 splitting one mark in twelve, 22 to 35 WPM still decode cleanly. Tested on air
-against hand-sent and machine-sent Morse from 10 to 60 WPM.
+against hand-sent and machine-sent Morse from 10 to 45 WPM.
 
 ## Known limits
 
@@ -162,9 +169,13 @@ against hand-sent and machine-sent Morse from 10 to 60 WPM.
   about 94 Hz at `ENV_N` = 512, wider than CW needs — choosing the window
   length from the locked speed would sharpen adjacent-signal rejection.
 - The analysis window and the vote length are fractions of a dit rather than
-  fixed times, so they narrow at speed. Tested to 45 WPM, the top of the fit
-  range; above that the 4 ms poll starts to dominate and sample-accurate edge
-  timing would need an AudioWorklet.
+  fixed times, so they narrow at speed. Decodes cleanly to 60 WPM, the top of
+  the fit range. Above about 50 WPM the displayed speed reads a few WPM low,
+  as the detector's latency becomes a large fraction of a dit.
+- **Speed is in PARIS words.** Some keyers and apps time to the CODEX word
+  (60 units, not 50), which makes their "40 WPM" 48 WPM by PARIS. If the
+  displayed speed runs about 20% above what the sender claims, that is the
+  reason. The Unit reading in milliseconds is the ground truth either way.
 
 ## Tuning constants
 

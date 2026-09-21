@@ -93,7 +93,7 @@
   <div class="panel sliders">
     <label>Tone <input type="range" id="freq" min="300" max="1200" step="5" value="700"><span class="val" id="freqVal">700 Hz</span></label>
     <label>Sensitivity <input type="range" id="sens" min="15" max="75" step="1" value="60"><span class="val" id="sensVal">60%</span></label>
-    <label>Start speed <input type="range" id="preset" min="8" max="40" step="1" value="21"><span class="val" id="presetVal">21 WPM</span></label>
+    <label>Start speed <input type="range" id="preset" min="8" max="60" step="1" value="21"><span class="val" id="presetVal">21 WPM</span></label>
     <label><input type="checkbox" id="toneTrack" checked> Follow the tone</label>
     <label><input type="checkbox" id="fastLock" checked> Fast speed lock</label>
     <label><input type="checkbox" id="holdOutput" checked> Hold output until locked</label>
@@ -135,7 +135,7 @@ const MORSE = {
    Timing state — the article's MARK, SPACE, UNIT and CHAR
 ------------------------------------------------------------------ */
 let PRESET_UNIT = 1.2/21;         // starting UNIT, set by the Start speed slider
-const MIN_UNIT = 1.2/60;          // 45 WPM ceiling
+const MIN_UNIT = 1.2/60;          // 60 WPM ceiling
 const MAX_UNIT = 1.2/8;           // 8 WPM floor
 const POLL_MS  = 4;               // detector sampling interval
 const VOTES_MAX = 5;              // majority vote length, scaled to the speed below
@@ -454,7 +454,7 @@ function fitError(u, d){
 
 function bestUnit(){
   let bestU = unit, bestD = bias, bestE = Infinity;
-  for (let wpm = 8; wpm <= 45; wpm += 0.5){
+  for (let wpm = 8; wpm <= 60; wpm += 0.5){
     const u = 1.2/wpm;
     for (let k = -2; k <= 8; k++){
       const d = u*k/16;
@@ -518,7 +518,7 @@ function relock(weight){
   // Lock is a live judgement, not a one-off: if the element timings stop
   // fitting, drop back to holding output rather than printing fragments.
   if (lastFitErr > 0.45){ unlock(); return 'poor'; }
-  if ((lastFitWpm <= 8.5 || lastFitWpm >= 44.5) && lastFitErr > 0.20){ unlock(); return 'poor'; }
+  if ((lastFitWpm <= 8.5 || lastFitWpm >= 59.5) && lastFitErr > 0.20){ unlock(); return 'poor'; }
   const w = Math.abs(fit.u-unit) > 0.3*unit ? Math.min(1, weight*2) : weight;
   unit = Math.min(MAX_UNIT, Math.max(MIN_UNIT, unit*(1-w) + fit.u*w));
   bias = bias*(1-w) + fit.d*w;
