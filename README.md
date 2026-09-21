@@ -19,8 +19,7 @@ The simplest way is the [live demo](https://sparks72.github.io/morse1981/):
 it is served over https, so every browser will offer microphone access.
 
 To run it locally, open `index.html` and press **Start**, then allow microphone
-access when prompted. Firefox will prompt for a file opened directly from disk;
-Chrome and Edge treat `file://` as an insecure origin and refuse the microphone
+access when prompted. Firefox, Chrome and Edge might treat `file://` as an insecure origin and refuse the microphone
 without any visible error, so under those serve the file instead:
 
     python -m http.server 8000
