@@ -90,7 +90,7 @@ space, and never feeds the adaptation. The decoder can speed up but cannot
 slow down.
 
 Instead, the last 36 marks and 36 gaps are fitted against the whole 1 : 3 : 7
-pattern, scoring candidate speeds from 8 to 45 WPM. The best-scoring speed is
+pattern, scoring candidate speeds from 8 to 60 WPM. The best-scoring speed is
 taken, so correction works in both directions and does not depend on the
 current UNIT being right.
 
