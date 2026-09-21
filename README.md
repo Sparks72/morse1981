@@ -142,7 +142,7 @@ floor), starting from 21 WPM:
 
 One character is lost while the fit commits. With 8% timing jitter and a click
 splitting one mark in twelve, 22 to 35 WPM still decode cleanly. Tested on air
-against hand-sent and machine-sent Morse from 10 to 45 WPM.
+against hand-sent and machine-sent Morse from 10 to 60 WPM.
 
 ## Known limits
 
@@ -177,4 +177,4 @@ Near the top of the script:
 | `POLL_MS` | 4 | Detector sampling interval. |
 | `VOTE_FRAC` / `VOTES_MAX` | 0.30 / 5 | Vote length as a fraction of a dit, and its cap. |
 | `FIT_LEN` | 36 | Elements held for the speed fit. |
-| `MIN_UNIT` / `MAX_UNIT` | 45 / 8 WPM | Limits of the speed fit. |
+| `MIN_UNIT` / `MAX_UNIT` | 60 / 8 WPM | Limits of the speed fit. |
