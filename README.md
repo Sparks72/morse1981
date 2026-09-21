@@ -1,6 +1,6 @@
 # Morse Code Decoder — DJ0CU / G4ADF
 
-A browser-based CW decoder. It listens on the sound card, shows a waterfall for
+A browser-based CW decoder. It listens on the sound card, Rig loud speaker and phone loud speaker etc. Shows a waterfall for
 tuning, and prints decoded text. One self-contained `index.html` file, no
 install, no libraries.
 
@@ -13,9 +13,8 @@ issue is scanned at
 ## Running it
 
 Open `index.html` and press **Start**, then allow microphone access when
-prompted. Firefox will prompt for a file opened directly from disk; Chrome and
-Edge treat `file://` as an insecure origin and refuse the microphone without
-any visible error, so under those serve the file instead:
+prompted. If Firefox, Chrome or Edge treat `file://` as an insecure origin and refuse the microphone without
+any visible error, so under those circumstances serve the file instead:
 
     python -m http.server 8000
 
