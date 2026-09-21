@@ -391,6 +391,11 @@ function closeMark(){
   if (tooLong){                                 // wait for space, then return to start
     accumMark = 0; markOpen = false; tooLong = false;
     charBits = [];
+    // A mark over eight units means either a carrier or a sender who has
+    // slowed right down.  Either way the fit buffer describes a speed that no
+    // longer applies; left in place it drags the fit straight back to it.
+    recentMarks = []; recentGaps = []; bias = 0;
+    unlock();
     unit = PRESET_UNIT; updateReadouts();
     return;
   }
@@ -537,7 +542,11 @@ function adaptUnit(gap){
    that follow.  The delay is flushed after a pause in sending, so the tail of
    a transmission is never left sitting in the buffer. */
 const HOLD_CHARS = 10;      // characters held back
-const HOLD_SECS  = 1.5;     // ...but never for longer than this
+const HOLD_SECS  = 1.5;     // ...but never for longer than this, at speed
+/* At slow speeds a word takes longer than 1.5 s to send, so the first suspect
+   word would be committed before the second one arrived to condemn it.  Scale
+   the time limit with the unit: about forty units, two or three short words. */
+function holdSecs(){ return Math.max(HOLD_SECS, 40*unit); }
 let buffered = true;
 let pending = [];           // [{c, t}]
 
@@ -557,7 +566,7 @@ function emit(ch){
 
 function agePending(now){
   let moved = false;
-  while (pending.length && now - pending[0].t > HOLD_SECS){ commitOldest(); moved = true; }
+  while (pending.length && now - pending[0].t > holdSecs()){ commitOldest(); moved = true; }
   if (moved) updateText();
 }
 
@@ -567,9 +576,16 @@ function agePending(now){
 function dropPendingFrom(marker){
   const held = pending.map(p => p.c).join('');
   let cut;
-  if (marker === 'tt'){
-    const m = held.match(/(^|\s)TT(\s|$)/);          // the first lone TT held
-    cut = m ? m.index + (m[1] ? 1 : 0) : 0;
+  if (marker === 'suspect'){
+    // walk back over the trailing stretch of bad words and cut where it starts
+    const words = held.split(' ');
+    let end = words.length - 1;
+    if (end > 0 && !isBad(words[end])) end--;        // an unfinished word after the trigger
+    let start = end + 1;
+    while (start > 0 && (isBad(words[start-1]) || words[start-1] === '')) start--;
+    let pos = 0;
+    for (let i = 0; i < start; i++) pos += words[i].length + 1;
+    cut = Math.min(pos, pending.length);
   } else {
     cut = Math.max(0, pending.length - marker);      // the degenerate run
   }
@@ -602,52 +618,76 @@ const DEGENERATE = 'ETIMSOH50*';
 let degRun = 0;
 let recentChars = [];
 
-/* A sharper test than the run length, suggested from on-air use: "TT" standing
-   alone as a word is not a word in any traffic worth decoding, whereas TT
-   inside a word is ordinary (LETTER, BETTER, ATTACK).  Two lone TTs in the
-   recent window means the dah threshold has drifted and long elements are
-   being chopped into pairs of T.  Word spaces are recorded even while output
-   is held, so the boundaries are known either way. */
-function loneTT(){
+/* Nonsense-word test.  A lost lock chops elements into strings of E, T and I,
+   and almost no real word is spelled with those letters alone.  So rather
+   than listing the garbage — 360 combinations up to five letters, and it
+   keeps going — list the handful of genuine words and treat every other
+   E/T/I word of two or more letters as suspect.  Two suspect words in the
+   recent window means lost sync.  Lone E and T stay neutral: they turn up
+   legitimately as cut numbers.  The lone-TT rule from on-air testing is one
+   case of this. */
+const ETI_WORDS = new Set(['IT', 'TIE', 'TEE', 'TIT', 'EI']);   // EI, TEE: German
+
+function isSuspect(w){
+  if (/EEE|TTT|III/.test(w)) return true;        // never in real text: TTTTCMTNFIET
+  return w.length >= 2 && /^[ETI]+$/.test(w) && !ETI_WORDS.has(w);
+}
+
+function completedWords(){
   const words = recentChars.join('').split(' ');
   words.pop();                       // the last word is not finished yet
-  return words.filter(w => w === 'TT').length;
+  return words.filter(w => w.length);
+}
+
+function suspectCount(){
+  return completedWords().filter(isSuspect).length;
+}
+
+/* A collapsed lock also prints a string of lone letters — "E E T E" — and a
+   run of four single-letter words is vanishingly rare in real traffic.  This
+   replaces the old rule of five degenerate CHARACTERS in a row, which fired
+   on ordinary English: "SHE IS HOME" is nine such letters running. */
+function loneRun(){
+  const words = completedWords();
+  let n = 0;
+  for (let i = words.length-1; i >= 0; i--){
+    if (words[i].length === 1 && DEGENERATE.includes(words[i])) n++; else break;
+  }
+  return n;
+}
+
+function isBad(w){
+  return isSuspect(w) || (w.length === 1 && DEGENERATE.includes(w));
+}
+
+function syncVerdict(){
+  recentChars = [];
+  dropPendingFrom('suspect');        // cut back to the first suspect word held
+  unlock();
+  if (relock(1) === 'poor'){
+    recentMarks = []; recentGaps = [];
+    unit = PRESET_UNIT; bias = 0;
+    updateReadouts();
+  }
+}
+
+function checkSuspect(){
+  if (suspectCount() < 2 && loneRun() < 4) return false;
+  syncVerdict();
+  return true;
 }
 
 function checkLostLock(ch){
   recentChars.push(ch);
   if (recentChars.length > 24) recentChars.shift();
-  if (loneTT() >= 2){
-    recentChars = [];
-    dropPendingFrom('tt');                            // discard from the first lone TT
-    unlock();
-    if (relock(1) === 'poor'){
-      recentMarks = []; recentGaps = [];
-      unit = PRESET_UNIT; bias = 0;
-      updateReadouts();
-    }
-    return;
-  }
-  if (ch.length === 1 && DEGENERATE.includes(ch)) degRun++;
-  else degRun = 0;
-  if (degRun >= 5){ dropPendingFrom(degRun); unlock(); }   // drop the degenerate run
-  if (degRun >= 8){
-    degRun = 0;
-    // Only start again if the fit was genuinely judged and found wanting.
-    // Clearing the buffers while they are still filling would throw away the
-    // very measurements needed to recover.
-    if (relock(1) === 'poor'){
-      recentMarks = []; recentGaps = [];
-      unit = PRESET_UNIT; bias = 0; locked = false;
-      if (audioCtx) statusEl.textContent = 'Finding the speed';
-      updateReadouts();
-    }
-  }
+  if (checkSuspect()) return;
 }
 
 function addWordSpace(){
   // Recorded even when output is held, so word boundaries stay known.
   if (recentChars[recentChars.length-1] !== ' ') recentChars.push(' ');
+  if (recentChars.length > 24) recentChars.shift();
+  if (checkSuspect()) return;
   if (holdOutput && !locked) return;
   const last = pending.length ? pending[pending.length-1].c : text.slice(-1);
   if ((text || pending.length) && last !== ' ') emit(' ');

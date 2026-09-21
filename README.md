@@ -13,7 +13,15 @@ issue is scanned at
 ## Running it
 
 Open `index.html` and press **Start**, then allow microphone access when
-prompted.
+prompted. Firefox will prompt for a file opened directly from disk; Chrome and
+Edge treat `file://` as an insecure origin and refuse the microphone without
+any visible error, so under those serve the file instead:
+
+    python -m http.server 8000
+
+then open `http://localhost:8000/`. Any static server, or any `https://` host,
+works the same way.
+
 ## Controls
 
 | Control | What it does |
@@ -92,12 +100,29 @@ about the same amount. That offset is fitted as a second parameter and removed
 from the decision thresholds.
 
 Lock is a live judgement, not a one-off. It is dropped when the jitter
-rises above 45%, when the fit lands on either end of the speed range, after
-five consecutive single-symbol characters (E T I M S O H 5 0 or `*`), or when
-two lone `TT` words appear inside the last 24 characters. That last test came
-from on-air use: `TT` inside a word is ordinary — LETTER, BETTER, ATTACK all
-decode that way — but `TT` standing alone as a word, twice, means long
-elements are being chopped into pairs of T.
+rises above 45%, when the fit lands on either end of the speed range, or when
+the decoded words stop looking like words:
+
+- **Nonsense words.** A collapsing lock chops elements into strings of E, T
+  and I, and almost no real word is spelled with those letters alone. So the
+  decoder keeps a short list of the genuine ones — IT, TIE, TEE, TIT, and
+  German EI — and treats every other E/T/I word of two or more letters as
+  suspect. Two suspect words in the recent window means lost sync. Listing
+  the real words rather than the garbage is what makes this work: there are
+  360 E/T/I combinations up to five letters alone, but only a handful of
+  genuine words. Lone E and T are left alone, since they turn up as cut
+  numbers.
+- **Lone-letter runs.** Four single-letter words in a row — "E T E E" — is
+  the other signature of a collapsed lock, and vanishingly rare in real
+  traffic.
+
+The idea started from on-air testing: `TT` standing alone as a word, twice,
+reliably meant lost sync. The nonsense-word rule is the general case of that
+observation, after the Autocorrect table in the author's Simple32.
+
+These rules work on words rather than letters deliberately. An earlier rule
+counted consecutive "degenerate" letters (E T I M S O H 5 0) and fired on
+ordinary English — "SHE IS HOME" is nine of them in a row.
 
 Because output is held back, those verdicts trim the text as well as stopping
 it: the held characters are cut back to the first offending one, so the
